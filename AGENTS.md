@@ -27,7 +27,7 @@ the code's doc comments and `README.md` say *what* it is.
 ```sh
 cargo fmt --check
 RUSTFLAGS="-D warnings" cargo clippy --all-targets --all-features
-for f in "" "--features x11" "--features fbdev" "--features canvas" "--features bmp"; do cargo build --no-default-features $f; done
+for f in "" "--features x11" "--features fbdev" "--features canvas" "--features bmp" "--features font" "--features font-terminus-16"; do cargo build --no-default-features $f; done
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 PROTOLITH_REQUIRE_XVFB=1 cargo test --all-features
 PROTOLITH_REQUIRE_XVFB=1 cargo +1.75 test --all-features
@@ -83,12 +83,12 @@ copied skin assets).
    follow Stele's `src/surface/mem.rs`, **not** its CSS-coupled
    `Surface`/`TextRun` API. Measured: +2.7 KB all ops used, +5.1 KB the
    decoder.
-2. Fonts — a generic glyph-sheet bitmap font (Winamp `text.bmp` style),
-   then Stele's Terminus (`src/text/terminus*.rs`, OFL-1.1). **Decided
-   (2026-11-25): bring Terminus in now, one cargo feature per pixel size**
-   (and weight), so the smallest useful slice is ~3 KB (16px regular)
-   rather than ~69 KB for all 5 sizes × 2 weights. Ship the OFL text and
-   attribution with it.
+2. **Done:** `font` — the `Font` trait, `SheetFont` (sprite-sheet glyphs
+   by layout string) and Terminus (OFL-1.1, `third_party/terminus-font/`),
+   one feature per size/weight, regenerated from upstream BDF by
+   `tools/gen-terminus.py` (byte-identical to Stele's tables). No 12 px
+   bold: upstream's is a copy of the regular — when rewiring Stele, map its
+   bold 12 to `REGULAR_12`. Measured: 16 px regular +3.4 KB all in.
 3. Text field — the cursor/edit core from Stele's
    `src/backend/address_edit.rs`, generalized.
 4. Widgets — Button, Toggle, Slider, List as plain state structs: protolith

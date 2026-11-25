@@ -42,6 +42,8 @@ jobs:
       - run: cargo build --no-default-features --features fbdev
       - run: cargo build --no-default-features --features canvas
       - run: cargo build --no-default-features --features bmp
+      - run: cargo build --no-default-features --features font
+      - run: cargo build --no-default-features --features font-terminus-16
 
   lint:
     runs-on: ubuntu-latest

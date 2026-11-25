@@ -37,12 +37,16 @@
 //! - `canvas` — software drawing on an owned image: fills, blending,
 //!   sprite blits, nearest-neighbor scaling; `canvas::bmp` decodes BMP
 //!   sprite sheets.
+//! - `font` — bitmap text on a canvas: sprite-sheet fonts, and a Terminus
+//!   Font subset (OFL-1.1) with one feature per size and weight.
 //!
 //! ## Features
 //!
 //! `x11` and `fbdev` (both on by default) select the backends. `canvas`
 //! adds software drawing, and `bmp` (which implies `canvas`) the BMP
-//! decoder. Each feature costs nothing when it is off.
+//! decoder. `font` adds bitmap text, and `font-terminus-16` (likewise
+//! `-12`, `-20`, `-24`, `-32`, and `-16-bold` … `-32-bold`) one size of
+//! Terminus each. Each feature costs nothing when it is off.
 
 #![forbid(unsafe_code)]
 #![doc(html_root_url = "https://docs.rs/protolith/0.1.0")]
@@ -60,6 +64,8 @@ struct ReadmeDoctests;
 pub mod canvas;
 #[cfg(feature = "fbdev")]
 pub mod fbdev;
+#[cfg(feature = "font")]
+pub mod font;
 #[cfg(feature = "x11")]
 pub mod x11;
 

@@ -5,7 +5,9 @@ edition = "2021"
 rust-version = "1.75"
 description = "Pixels in a window with nothing underneath: a dependency-free, unsafe-free X11 client and Linux framebuffer presenter, written against the wire protocol."
 repository = "https://github.com/tuckermclean/protolith"
-license = "MIT OR Apache-2.0"
+# The crate is MIT OR Apache-2.0; the embedded Terminus glyphs (src/font/terminus/,
+# used only by the font-terminus-* features) are OFL-1.1.
+license = "(MIT OR Apache-2.0) AND OFL-1.1"
 keywords = ["x11", "framebuffer", "window", "pixels", "fbdev"]
 categories = ["gui", "graphics", "rendering"]
 readme = "README.md"
@@ -26,6 +28,19 @@ fbdev = []
 canvas = []
 # A decoder for uncompressed BMP files (skin sprite sheets), into a canvas.
 bmp = ["canvas"]
+# Bitmap text on a canvas: the `Font` trait and sprite-sheet fonts.
+font = ["canvas"]
+# The Terminus Font subset (OFL-1.1), one feature per size and weight, so a
+# program carries only the bitmaps it uses (16 px regular: 3 KB of data).
+font-terminus-12 = ["font"]
+font-terminus-16 = ["font"]
+font-terminus-16-bold = ["font"]
+font-terminus-20 = ["font"]
+font-terminus-20-bold = ["font"]
+font-terminus-24 = ["font"]
+font-terminus-24-bold = ["font"]
+font-terminus-32 = ["font"]
+font-terminus-32-bold = ["font"]
 
 [[example]]
 name = "hello"
@@ -38,6 +53,10 @@ required-features = ["x11"]
 [[example]]
 name = "canvas"
 required-features = ["x11", "bmp"]
+
+[[example]]
+name = "text"
+required-features = ["x11", "font-terminus-12", "font-terminus-16", "font-terminus-16-bold", "font-terminus-32-bold"]
 
 [[example]]
 name = "fbdev"

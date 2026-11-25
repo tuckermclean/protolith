@@ -39,6 +39,7 @@ fn main() -> protolith::Result<()> {
 | **Windows** | Several per connection. Title, class, icon, fixed size, no decorations, always-on-top, override-redirect, show/hide, move/resize. **Non-rectangular** windows via SHAPE, with a mask-to-rectangles helper. **Window dragging** for borderless windows: handed to the window manager when it can, done by protolith when there is none. |
 | **Input** | Keys (Shift, Caps/Shift Lock, Num Lock, autorepeat detection via XKB where available, media keys), buttons, wheel, coalesced motion with root coordinates, enter/leave, focus, close requests. A `Waker` to interrupt the event loop from another thread. |
 | **Canvas** *(feature `canvas`)* | Software drawing on an owned image: fills, clipping, alpha blending (exactly rounded), sprite blits — copied, color-keyed or alpha-blended — and nearest-neighbor scaling, all total over any coordinates. Feature `bmp` decodes uncompressed BMP sprite sheets (1/4/8/16/24/32-bit, both row orders, Windows and OS/2 headers). |
+| **Text** *(feature `font`)* | A `Font` trait with two kinds: sprite-sheet fonts cut from a skin image (any cell size, any character order, color key or copy), and a Terminus Font subset (ASCII + Latin-1) drawn in any color — each size and weight its own feature (`font-terminus-16` is 3 KB of glyphs). |
 | **Framebuffer** | `/dev/fbN` at 16/24/32 bpp with partial updates, for machines with no X at all. |
 | **Escape hatches** | `x11::Client` sends any request and collects any reply, with sequence numbers, errors and events demultiplexed for you. `x11::proto` is the protocol as pure functions. |
 
@@ -105,6 +106,7 @@ Install `xvfb` and `x11-utils` to run all of it locally.
 cargo run --example hello     # paint with the mouse
 cargo run --example shaped    # a borderless, rounded, draggable little player face
 cargo run --example canvas --features bmp   # sprites, color key, blending, 2x scaling
+cargo run --example text --features x11,font-terminus-12,font-terminus-16,font-terminus-16-bold,font-terminus-32-bold
 cargo run --example fbdev     # a test card on /dev/fb0 (from a text console)
 ```
 
@@ -121,4 +123,8 @@ counts its bytes.
 
 ## License
 
-MIT or Apache-2.0, at your option.
+MIT or Apache-2.0, at your option — except the embedded subset of
+[Terminus Font](https://terminus-font.sourceforge.net/) by Dimitar Toshkov
+Zhekov (`src/font/terminus/`, compiled in only by the `font-terminus-*`
+features), which is under the SIL Open Font License 1.1; see
+[`third_party/terminus-font/`](third_party/terminus-font/).

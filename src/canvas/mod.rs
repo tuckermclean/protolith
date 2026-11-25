@@ -180,6 +180,31 @@ impl Canvas {
         }
     }
 
+    /// Paint `color` wherever a 1-bit `mask` is set — a bitmap glyph, an
+    /// icon, a cursor. The mask is `width × height`, top row first, each row
+    /// `ceil(width / 8)` bytes with the most significant bit leftmost (the
+    /// BDF and PSF font layout). Drawn with its top-left at `(x, y)`,
+    /// clipped; rows missing from a short `mask` are not drawn.
+    pub fn fill_mask(&mut self, mask: &[u8], width: u32, height: u32, x: i32, y: i32, color: u32) {
+        let row_bytes = width.div_ceil(8) as usize;
+        let r = self.clip.intersect(&Rect::new(x, y, width, height));
+        if r.is_empty() {
+            return;
+        }
+        let w = self.width as usize;
+        for dy in r.y..r.y + r.height as i32 {
+            // Offsets into the mask are non-negative: r lies inside (x, y, width, height).
+            let my = (i64::from(dy) - i64::from(y)) as usize;
+            let Some(bits) = my.checked_mul(row_bytes).and_then(|o| mask.get(o..)?.get(..row_bytes)) else { break };
+            for dx in r.x..r.x + r.width as i32 {
+                let mx = (i64::from(dx) - i64::from(x)) as usize;
+                if bits[mx / 8] & (0x80 >> (mx % 8)) != 0 {
+                    self.pixels[dy as usize * w + dx as usize] = color & 0x00ff_ffff;
+                }
+            }
+        }
+    }
+
     /// Copy the `from` area of `src` with its top-left at `(x, y)`.
     /// Parts of `from` outside `src` are not drawn.
     pub fn blit(&mut self, src: &Frame<'_>, from: Rect, x: i32, y: i32) {
@@ -454,6 +479,32 @@ mod tests {
             }
             assert_eq!(c.pixels(), want.pixels(), "clip {clip:?} from {from:?} at ({x}, {y}) {key:?}");
         }
+    }
+
+    #[test]
+    fn fill_mask_is_msb_first_and_multi_byte() {
+        // 10 wide → 2 bytes per row. Row 0: pixels 0, 7, 8, 9; row 1: pixel 1.
+        let mask = [0b1000_0001, 0b1100_0000, 0b0100_0000, 0b0011_1111];
+        let mut c = Canvas::new(12, 2);
+        c.fill_mask(&mask, 10, 2, 1, 0, 0xffab_cdef);
+        let lit: Vec<(u32, u32)> = (0..2).flat_map(|y| (0..12).map(move |x| (x, y))).filter(|&(x, y)| c.get(x, y) == Some(0xabcdef)).collect();
+        assert_eq!(lit, [(1, 0), (8, 0), (9, 0), (10, 0), (2, 1)], "the unused low bits of a row's last byte are ignored");
+    }
+
+    #[test]
+    fn fill_mask_clips_and_tolerates_short_masks() {
+        let mask = [0xff; 3]; // 8x3, all set
+        let mut c = Canvas::new(4, 4);
+        c.set_clip(Rect::new(1, 0, 9, 9));
+        c.fill_mask(&mask, 8, 3, -4, 2, 1);
+        assert_eq!(c.pixels(), &[0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1]);
+        let mut c = Canvas::new(2, 4);
+        c.fill_mask(&mask[..2], 8, 3, 0, 0, 1);
+        assert_eq!(c.pixels(), &[1, 1, 1, 1, 0, 0, 0, 0], "the missing third row is not drawn");
+        c.fill_mask(&mask, u32::MAX, u32::MAX, i32::MIN, i32::MIN, 1);
+        c.fill_mask(&[], 8, 8, 0, 0, 2);
+        c.fill_mask(&mask, 0, 3, 0, 0, 2);
+        assert!(!c.pixels().contains(&2));
     }
 
     #[test]

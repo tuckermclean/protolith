@@ -35,5 +35,16 @@ Compared with the code it came from:
   (1/4/8/16/24/32-bit uncompressed; RLE and bit fields are refused) reads
   skin sprite sheets. Priced at the floppy profile: +2.7 KB with every
   canvas operation in use, +5.1 KB more for the decoder, nothing when off.
+- **Text** (new, feature `font`): a `Font` trait; `SheetFont`, glyphs cut
+  from a skin sprite sheet by a layout string; and a 191-glyph subset of
+  Terminus Font (OFL-1.1, from upstream 4.49.1 BDF via
+  `tools/gen-terminus.py`), one feature per size and weight
+  (`font-terminus-{12,16,20,24,32}` and `-bold` for 16–32). Stored as flat
+  bitmaps rather than Stele's per-glyph slices. There is no 12 px bold:
+  upstream's `ter-u12b` is a copy of the regular. `Canvas::fill_mask` draws
+  1-bit bitmaps. Priced at the floppy profile: 16 px regular +3.4 KB in
+  all (3,056 bytes of it glyphs), each further table its data size
+  (+3.1 KB for 16 px bold, +12.6 KB for 32 px), sheet fonts ~1.9 KB of
+  code over the canvas.
 - **fbdev**: partial updates with positioned writes, 24 bpp, the current
   mode and live pan offset honored, never writes row padding.
