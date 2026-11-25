@@ -763,3 +763,87 @@ fn caps_lock_and_server_autorepeat() {
     assert_eq!(keys.last(), Some(&(false, false)));
     assert!(keys[1..keys.len() - 1].iter().all(|k| *k == (true, true)), "{keys:?}");
 }
+
+/// A text field driven by real server input: XTEST keys and clicks,
+/// decoded by protolith, edit the field; what it draws reaches the window.
+#[cfg(feature = "ui")]
+#[test]
+fn text_field_takes_real_keys_and_clicks() {
+    use protolith::canvas::Canvas;
+    use protolith::font::Font;
+    use protolith::ui::{FieldStyle, Response, TextField};
+
+    /// 5-pixel cells, each a solid block.
+    struct Blocks;
+    impl Font for Blocks {
+        fn line_height(&self) -> u32 {
+            8
+        }
+        fn advance(&self, _: char) -> u32 {
+            5
+        }
+        fn draw_char(&self, canvas: &mut Canvas, _: char, x: i32, y: i32, color: u32) -> u32 {
+            canvas.fill_rect(Rect::new(x, y, 5, 8), color);
+            5
+        }
+    }
+
+    let Some(x) = xvfb(24, &[], None) else { return };
+    let mut conn = open(&x);
+    let win = conn.create_window(WindowOptions::new(100, 20).position(0, 0)).unwrap();
+    wait_for(&mut conn, |e| matches!(e, Event::Focused { focused: true, .. }));
+    let xt = Xtest::new(&mut conn);
+    let code = |conn: &mut Connection, keysym: u32| conn.keymap().keycode_for(keysym).unwrap_or_else(|| panic!("keysym {keysym:#x} on the keymap")).0;
+    let [a, b, c, ex, left, shift, ctrl, backspace, enter] = [0x61, 0x62, 0x63, 0x78, 0xff51, 0xffe1, 0xffe3, 0xff08, 0xff0d].map(|k| code(&mut conn, k));
+    let tap = |conn: &mut Connection, k: u8| {
+        xt.fake(conn, 2, k, 0, 0);
+        xt.fake(conn, 3, k, 0, 0);
+    };
+
+    let mut field = TextField::new(Rect::new(0, 0, 100, 20)).with_padding(2);
+    let feed = |conn: &mut Connection, field: &mut TextField| -> Vec<Response> {
+        pump(conn, Duration::from_millis(300))
+            .iter()
+            .filter(|e| e.window() == Some(win))
+            .map(|e| field.handle(e, &Blocks))
+            .filter(|r| *r != Response::Ignored)
+            .collect()
+    };
+
+    // Click into the field to focus it, then type, move, select, replace.
+    xt.move_to(&mut conn, 50, 10);
+    xt.fake(&mut conn, 4, 1, 0, 0);
+    xt.fake(&mut conn, 5, 1, 0, 0);
+    for k in [a, b, c, left] {
+        tap(&mut conn, k);
+    }
+    xt.fake(&mut conn, 2, shift, 0, 0);
+    tap(&mut conn, left);
+    xt.fake(&mut conn, 3, shift, 0, 0);
+    tap(&mut conn, ex);
+    feed(&mut conn, &mut field);
+    assert!(field.is_focused());
+    assert_eq!(field.edit.text(), "axc");
+
+    // Ctrl+A, Backspace; then click between the two typed letters.
+    xt.fake(&mut conn, 2, ctrl, 0, 0);
+    tap(&mut conn, a);
+    xt.fake(&mut conn, 3, ctrl, 0, 0);
+    tap(&mut conn, backspace);
+    tap(&mut conn, b);
+    tap(&mut conn, c);
+    xt.move_to(&mut conn, 7, 10); // text starts at x = 2; 7 is the 'b'|'c' boundary
+    xt.fake(&mut conn, 4, 1, 0, 0);
+    xt.fake(&mut conn, 5, 1, 0, 0);
+    tap(&mut conn, a);
+    tap(&mut conn, enter);
+    let responses = feed(&mut conn, &mut field);
+    assert_eq!(field.edit.text(), "bac");
+    assert_eq!(responses.last(), Some(&Response::Submit), "{responses:?}");
+
+    // What the field draws is what the window shows.
+    let mut canvas = Canvas::new(100, 20);
+    field.draw(&mut canvas, &Blocks, &FieldStyle::default());
+    conn.present(win, &canvas.frame()).unwrap();
+    assert_shows(&mut conn, win, Rect::new(0, 0, 100, 20), canvas.pixels());
+}

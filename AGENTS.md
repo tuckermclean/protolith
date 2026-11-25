@@ -27,7 +27,7 @@ the code's doc comments and `README.md` say *what* it is.
 ```sh
 cargo fmt --check
 RUSTFLAGS="-D warnings" cargo clippy --all-targets --all-features
-for f in "" "--features x11" "--features fbdev" "--features canvas" "--features bmp" "--features font" "--features font-terminus-16"; do cargo build --no-default-features $f; done
+for f in "" "--features x11" "--features fbdev" "--features canvas" "--features bmp" "--features font" "--features font-terminus-16" "--features ui"; do cargo build --no-default-features $f; done
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 PROTOLITH_REQUIRE_XVFB=1 cargo test --all-features
 PROTOLITH_REQUIRE_XVFB=1 cargo +1.75 test --all-features
@@ -89,8 +89,10 @@ copied skin assets).
    `tools/gen-terminus.py` (byte-identical to Stele's tables). No 12 px
    bold: upstream's is a copy of the regular — when rewiring Stele, map its
    bold 12 to `REGULAR_12`. Measured: 16 px regular +3.4 KB all in.
-3. Text field — the cursor/edit core from Stele's
-   `src/backend/address_edit.rs`, generalized.
+3. **Done:** `ui::TextEdit` (Stele's `address_edit.rs` core plus
+   selection, words, limit) and `ui::TextField` (events → `Response`,
+   mouse, scrolling, `FieldStyle`). Measured +6.8 KB. Stele's address bar
+   can sit on `TextEdit` directly when rewired.
 4. Widgets — Button, Toggle, Slider, List as plain state structs: protolith
    `Event` in, action out (press-inside/release-inside, drag capture,
    focus); appearance separate (sprite sheets, or a default drawn bevel).

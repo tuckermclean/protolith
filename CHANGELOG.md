@@ -46,5 +46,14 @@ Compared with the code it came from:
   all (3,056 bytes of it glyphs), each further table its data size
   (+3.1 KB for 16 px bold, +12.6 KB for 32 px), sheet fonts ~1.9 KB of
   code over the canvas.
+- **Widgets** (new, feature `ui`): `TextEdit`, a single-line buffer
+  generalized from Stele's `AddressEdit` (`src/backend/address_edit.rs`):
+  selection with an anchor, word motions and deletes, `Motion`-driven
+  delete, a length limit, control characters never stored. `TextField`
+  puts it on screen: X11 events in, `Response` out (`Ignored`, `Redraw`,
+  `Changed`, `Submit`, `Cancel`); click/drag/shift-click placement,
+  scrolling that keeps the cursor visible, `FieldStyle` drawing. Word
+  boundaries match Unicode exactly through Latin-1 and use a cheap rule
+  past it, saving 2.8 KB of Unicode tables. Priced: +6.8 KB.
 - **fbdev**: partial updates with positioned writes, 24 bpp, the current
   mode and live pan offset honored, never writes row padding.

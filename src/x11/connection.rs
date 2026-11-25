@@ -17,7 +17,7 @@ use crate::pixel::{Frame, PixelFormat, Rect};
 
 /// A window created by a [`Connection`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct WindowId(Xid);
+pub struct WindowId(pub(crate) Xid);
 
 impl WindowId {
     /// The X window id (for use with raw requests).

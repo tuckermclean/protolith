@@ -39,6 +39,8 @@
 //!   sprite sheets.
 //! - `font` — bitmap text on a canvas: sprite-sheet fonts, and a Terminus
 //!   Font subset (OFL-1.1) with one feature per size and weight.
+//! - `ui` — widgets as plain state structs: events in, a response out;
+//!   so far the text field.
 //!
 //! ## Features
 //!
@@ -46,7 +48,8 @@
 //! adds software drawing, and `bmp` (which implies `canvas`) the BMP
 //! decoder. `font` adds bitmap text, and `font-terminus-16` (likewise
 //! `-12`, `-20`, `-24`, `-32`, and `-16-bold` … `-32-bold`) one size of
-//! Terminus each. Each feature costs nothing when it is off.
+//! Terminus each. `ui` adds widgets. Each feature costs nothing when it is
+//! off.
 
 #![forbid(unsafe_code)]
 #![doc(html_root_url = "https://docs.rs/protolith/0.1.0")]
@@ -66,6 +69,8 @@ pub mod canvas;
 pub mod fbdev;
 #[cfg(feature = "font")]
 pub mod font;
+#[cfg(feature = "ui")]
+pub mod ui;
 #[cfg(feature = "x11")]
 pub mod x11;
 

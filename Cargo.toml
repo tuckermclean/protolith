@@ -41,6 +41,8 @@ font-terminus-24 = ["font"]
 font-terminus-24-bold = ["font"]
 font-terminus-32 = ["font"]
 font-terminus-32-bold = ["font"]
+# Widgets: plain state structs, events in, responses out (input needs x11).
+ui = ["font"]
 
 [[example]]
 name = "hello"
@@ -56,7 +58,7 @@ required-features = ["x11", "bmp"]
 
 [[example]]
 name = "text"
-required-features = ["x11", "font-terminus-12", "font-terminus-16", "font-terminus-16-bold", "font-terminus-32-bold"]
+required-features = ["x11", "ui", "font-terminus-12", "font-terminus-16", "font-terminus-16-bold", "font-terminus-32-bold"]
 
 [[example]]
 name = "fbdev"
