@@ -13,15 +13,20 @@
 //! - [`List`] — scrolling rows of text, one selected.
 //!
 //! Every widget can draw a default look (a 1996-style bevel, colors from
-//! [`Style`]); a skinned program instead reads the widget's state —
-//! [`Button::is_down`], [`Slider::thumb_rect`], [`List::selected`] — and
-//! blits its own sprites. A left click inside a widget focuses it and one
+//! [`Style`]), or be skinned: [`ButtonSprites`], [`ToggleSprites`] and
+//! [`SliderSprites`] (with [`Frames`] for tracks that change with the
+//! value) say where each state's picture is in a sprite sheet, and
+//! `draw_sprite` blits the right one. The list and text field take their
+//! skin as colors ([`Style`], [`FieldStyle`]) and a sprite-sheet
+//! [`SheetFont`](crate::font::SheetFont). Anything else can read the
+//! widget's state — [`Button::is_down`], [`Slider::thumb_rect`],
+//! [`List::selected`] — and draw itself. A left click inside a widget focuses it and one
 //! outside unfocuses it, so focus follows the mouse without help; moving
 //! it with Tab is the program's job (`set_focused`).
 //!
 //! ```
 //! use protolith::canvas::Canvas;
-//! use protolith::ui::{Button, Orientation, Slider, Style};
+//! use protolith::ui::{Button, ButtonSprites, Orientation, Slider, Style};
 //! use protolith::Rect;
 //!
 //! let play = Button::new(Rect::new(8, 8, 23, 18));
@@ -29,22 +34,24 @@
 //! let mut canvas = Canvas::new(120, 34);
 //! // Default looks...
 //! volume.draw(&mut canvas, &Style::default());
-//! // ...or a skin: here a sprite sheet with "up" at (0, 0) and "down" at (23, 0).
-//! let sheet = Canvas::new(46, 18);
-//! let sprite = if play.is_down() { Rect::new(23, 0, 23, 18) } else { Rect::new(0, 0, 23, 18) };
-//! canvas.blit(&sheet.frame(), sprite, play.rect().x, play.rect().y);
+//! // ...or a skin: a sprite sheet with "up" at (0, 0) and "down" at (23, 0).
+//! let sheet = Canvas::new(46, 18); // e.g. protolith::canvas::bmp::decode(&bytes)?
+//! let sprites = ButtonSprites { up: Rect::new(0, 0, 23, 18), down: Rect::new(23, 0, 23, 18) };
+//! play.draw_sprite(&mut canvas, &sheet.frame(), &sprites);
 //! ```
 
 mod button;
 mod edit;
 mod field;
 mod list;
+mod skin;
 mod slider;
 
 pub use button::{Button, Toggle};
 pub use edit::{Motion, TextEdit};
 pub use field::{FieldStyle, TextField};
 pub use list::List;
+pub use skin::{ButtonSprites, Frames, SliderSprites, ToggleSprites};
 pub use slider::{Orientation, Slider};
 
 use crate::canvas::Canvas;

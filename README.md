@@ -40,7 +40,7 @@ fn main() -> protolith::Result<()> {
 | **Input** | Keys (Shift, Caps/Shift Lock, Num Lock, autorepeat detection via XKB where available, media keys), buttons, wheel, coalesced motion with root coordinates, enter/leave, focus, close requests. A `Waker` to interrupt the event loop from another thread. |
 | **Canvas** *(feature `canvas`)* | Software drawing on an owned image: fills, clipping, alpha blending (exactly rounded), sprite blits — copied, color-keyed or alpha-blended — and nearest-neighbor scaling, all total over any coordinates. Feature `bmp` decodes BMP sprite sheets (1/4/8/16/24/32-bit, RLE8 and RLE4, both row orders, Windows and OS/2 headers) — checked pixel for pixel against an independent decoder on a real classic skin. |
 | **Text** *(feature `font`)* | A `Font` trait with two kinds: sprite-sheet fonts cut from a skin image (any cell size, any character order, color key or copy), and a Terminus Font subset (ASCII + Latin-1) drawn in any color — each size and weight its own feature (`font-terminus-16` is 3 KB of glyphs). |
-| **Widgets** *(feature `ui`)* | Plain state structs: events in, a `Response` out, drawn onto a canvas when you choose — no widget tree, layout or callbacks. `Button` (fires on release inside), `Toggle`, `Slider` (horizontal or vertical, drag capture, wheel, keys), `List` (selection, double click, scrolling), and `TextField` (selection, word moves, mouse, scrolling; its buffer `TextEdit` needs no window). Focus follows clicks. Each draws a default bevel look, or exposes its state for skin sprites. |
+| **Widgets** *(feature `ui`)* | Plain state structs: events in, a `Response` out, drawn onto a canvas when you choose — no widget tree, layout or callbacks. `Button` (fires on release inside), `Toggle`, `Slider` (horizontal or vertical, drag capture, wheel, keys), `List` (selection, double click, scrolling), and `TextField` (selection, word moves, mouse, scrolling; its buffer `TextEdit` needs no window). Focus follows clicks. Each draws a default bevel look, or is skinned from sprite sheets: `ButtonSprites`, `ToggleSprites`, and `SliderSprites` with `Frames` (track pictures that change with the value, linearly or out from the center); lists and text fields skin through colors and a `SheetFont`. |
 | **Framebuffer** | `/dev/fbN` at 16/24/32 bpp with partial updates, for machines with no X at all. |
 | **Escape hatches** | `x11::Client` sends any request and collects any reply, with sequence numbers, errors and events demultiplexed for you. `x11::proto` is the protocol as pure functions. |
 
@@ -109,6 +109,7 @@ cargo run --example shaped    # a borderless, rounded, draggable little player f
 cargo run --example canvas --features bmp   # sprites, color key, blending, 2x scaling
 cargo run --example text --features x11,ui,font-terminus-12,font-terminus-16,font-terminus-16-bold,font-terminus-32-bold
 cargo run --example widgets --features x11,ui,font-terminus-12
+cargo run --example skin --features x11,ui,bmp   # a skinned player face; pass an unpacked classic skin dir to wear it
 cargo run --example fbdev     # a test card on /dev/fb0 (from a text console)
 ```
 

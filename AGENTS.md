@@ -98,9 +98,16 @@ copied skin assets).
    Measured +6.6 KB for all four. `Event::Button` gained `time` for the
    list's double click.
 
-The UI layer is complete. Natural next steps, to agree with the user
-first: a skinned example player face (original art), and the Stele
-rewire below.
+5. **Done:** sprite-sheet skins — `ui::{ButtonSprites, ToggleSprites,
+   SliderSprites, Frames}` and `draw_sprite`; `examples/skin` (original
+   art generated in the classic sheet layout; optionally an unpacked
+   classic skin directory). Testing on a real skin showed most classic
+   bitmaps are RLE8, so `bmp` decodes RLE8/RLE4 now. The user's
+   `~/Downloads/base-2.91.wsz` is reference material only: never vendor
+   it or anything extracted from it.
+
+The UI layer is complete. Natural next step, to agree with the user
+first: the Stele rewire below.
 
 Out of scope for protolith: `.wsz` (ZIP/inflate) skin archives, audio,
 mpg123 control — those belong to the player.

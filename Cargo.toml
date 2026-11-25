@@ -65,6 +65,10 @@ name = "widgets"
 required-features = ["x11", "ui", "font-terminus-12"]
 
 [[example]]
+name = "skin"
+required-features = ["x11", "ui", "bmp"]
+
+[[example]]
 name = "fbdev"
 required-features = ["fbdev"]
 

@@ -65,6 +65,15 @@ Compared with the code it came from:
   slider as scroll bar). Shared `Style` and `Response::Clicked`; focus
   follows left clicks; every widget can be disabled. Priced: +6.6 KB for
   all four, handled and drawn.
+- **Sprite-sheet skins** for widgets: `ButtonSprites` (up, down),
+  `ToggleSprites` (off/on × up/down), `SliderSprites` (track `Frames`
+  picked by value — linearly, or outward from the center for a balance —
+  and thumb up/down, centered on the thumb's slot), each with a
+  `draw_sprite`. Sheets are blitted with alpha, so RGBA sheets with
+  transparency work and XRGB ones are copied. Shaped by the real layouts
+  of a classic skin; `examples/skin` draws a player face from a skin it
+  generates in that layout, or from an unpacked classic skin directory.
+  Priced: under 1 KB more than the default bevel drawing.
 - **`Event::Button` carries the server `time`**, so double clicks can be
   detected.
 - **fbdev**: partial updates with positioned writes, 24 bpp, the current
