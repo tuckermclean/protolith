@@ -725,6 +725,41 @@ pub mod shape {
     }
 }
 
+/// The XKEYBOARD extension, for the one thing protolith wants from it:
+/// detectable autorepeat.
+pub mod xkb {
+    use super::Req;
+    use crate::x11::proto::ReadLe;
+
+    /// Extension name for `QueryExtension`.
+    pub const NAME: &str = "XKEYBOARD";
+    /// `XkbUseCoreKbd` device spec.
+    pub const USE_CORE_KBD: u16 = 0x0100;
+    /// `XkbPCF_DetectableAutoRepeatMask`.
+    pub const DETECTABLE_AUTO_REPEAT: u32 = 1;
+
+    /// Encode `XkbUseExtension` (minor 0), which must precede any other
+    /// XKB request; asks for XKB 1.0.
+    pub fn use_extension(major: u8) -> Vec<u8> {
+        Req::new(major, 0).u16(1).u16(0).finish()
+    }
+
+    /// Decode an `XkbUseExtension` reply: is the version supported?
+    pub fn parse_use_extension(reply: &[u8]) -> Option<bool> {
+        reply.u8_at(1).map(|s| s != 0)
+    }
+
+    /// Encode `XkbPerClientFlags` (minor 21) setting `flags` in `change`.
+    pub fn per_client_flags(major: u8, change: u32, value: u32) -> Vec<u8> {
+        Req::new(major, 21).u16(USE_CORE_KBD).skip(2).u32(change).u32(value).u32(0).u32(0).u32(0).finish()
+    }
+
+    /// Decode an `XkbPerClientFlags` reply into `(supported, value)`.
+    pub fn parse_per_client_flags(reply: &[u8]) -> Option<(u32, u32)> {
+        Some((reply.u32_at(8)?, reply.u32_at(12)?))
+    }
+}
+
 // =========================================================== keyboard
 
 /// Encode `GetKeyboardMapping` (opcode 101).
@@ -1030,6 +1065,24 @@ mod tests {
         assert_eq!(shape::parse_rectangles(&reply), Some(vec![Rect::new(5, 6, 7, 8)]));
         reply[8] = 2;
         assert_eq!(shape::parse_rectangles(&reply), None, "truncated");
+    }
+
+    #[test]
+    fn xkb_requests() {
+        let r = xkb::use_extension(135);
+        check_len(&r);
+        assert_eq!(r, [135, 0, 2, 0, 1, 0, 0, 0]);
+        let r = xkb::per_client_flags(135, 1, 1);
+        check_len(&r);
+        assert_eq!(r.len(), 28);
+        assert_eq!(&r[..12], &[135, 21, 7, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(&r[12..16], &1u32.to_le_bytes());
+        let mut reply = vec![1u8, 1, 0, 0, 0, 0, 0, 0];
+        reply.extend_from_slice(&1u32.to_le_bytes());
+        reply.extend_from_slice(&1u32.to_le_bytes());
+        reply.resize(32, 0);
+        assert_eq!(xkb::parse_per_client_flags(&reply), Some((1, 1)));
+        assert_eq!(xkb::parse_use_extension(&reply), Some(true));
     }
 
     #[test]

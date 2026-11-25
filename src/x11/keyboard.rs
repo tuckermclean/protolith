@@ -134,6 +134,7 @@ pub mod keysym {
     pub const CONTROL_L: Keysym = 0xffe3;
     pub const CONTROL_R: Keysym = 0xffe4;
     pub const CAPS_LOCK: Keysym = 0xffe5;
+    pub const SHIFT_LOCK: Keysym = 0xffe6;
     pub const META_L: Keysym = 0xffe7;
     pub const META_R: Keysym = 0xffe8;
     pub const ALT_L: Keysym = 0xffe9;
@@ -264,13 +265,26 @@ pub struct Keymap {
     num_lock: u16,
     alt: u16,
     logo: u16,
+    lock: LockMode,
+}
+
+/// What the Lock modifier means, from the keysyms bound to it (§5).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum LockMode {
+    /// Nothing recognizable is bound to Lock: ignore it.
+    #[default]
+    None,
+    /// `Caps_Lock`: uppercase letters only.
+    Caps,
+    /// `Shift_Lock`: like holding Shift.
+    Shift,
 }
 
 impl Keymap {
     /// Build from `GetKeyboardMapping` (starting at `min_keycode`) and
     /// `GetModifierMapping` replies.
     pub fn new(min_keycode: u8, keysyms_per_keycode: u8, keysyms: Vec<Keysym>, modifiers: &[Vec<u8>; 8]) -> Keymap {
-        let mut map = Keymap { min_keycode, per_keycode: keysyms_per_keycode, keysyms, num_lock: 0, alt: 0, logo: 0 };
+        let mut map = Keymap { min_keycode, per_keycode: keysyms_per_keycode, keysyms, num_lock: 0, alt: 0, logo: 0, lock: LockMode::None };
         // Mod1..Mod5 are modifier indices 3..8; find which one each
         // special key is bound to, falling back to the usual Mod2/Mod1/Mod4.
         let find = |map: &Keymap, syms: &[Keysym], fallback: u16| {
@@ -281,6 +295,17 @@ impl Keymap {
         map.num_lock = find(&map, &[keysym::NUM_LOCK], 0);
         map.alt = find(&map, &[keysym::ALT_L, keysym::ALT_R, keysym::META_L, keysym::META_R], state::MOD1);
         map.logo = find(&map, &[keysym::SUPER_L, keysym::SUPER_R], state::MOD4);
+        // Lock is Caps Lock if Caps_Lock is bound to it, Shift Lock if
+        // Shift_Lock is, and otherwise ignored (protocol §5).
+        let lock_syms: Vec<Keysym> =
+            modifiers[1].iter().flat_map(|&kc| (0..usize::from(map.per_keycode)).map(move |col| (kc, col))).map(|(kc, col)| map.raw(kc, col)).collect();
+        map.lock = if lock_syms.contains(&keysym::CAPS_LOCK) {
+            LockMode::Caps
+        } else if lock_syms.contains(&keysym::SHIFT_LOCK) {
+            LockMode::Shift
+        } else {
+            LockMode::None
+        };
         map
     }
 
@@ -301,12 +326,13 @@ impl Keymap {
             // A lone keysym: a letter means (lower, upper); else itself twice.
             (k0, k1) = convert_case(k0);
         }
-        let shift = state_bits & state::SHIFT != 0;
-        let lock = state_bits & state::LOCK != 0;
+        let lock_on = state_bits & state::LOCK != 0;
+        let shift = state_bits & state::SHIFT != 0 || (lock_on && self.lock == LockMode::Shift);
+        let caps = lock_on && self.lock == LockMode::Caps;
         if self.num_lock != 0 && state_bits & self.num_lock != 0 && is_keypad(k1) {
             return if shift { k0 } else { k1 };
         }
-        match (shift, lock) {
+        match (shift, caps) {
             (false, false) => k0,
             (false, true) => convert_case(k0).1,
             (true, true) => convert_case(k1).1,
@@ -327,7 +353,7 @@ impl Keymap {
             ctrl: state_bits & state::CONTROL != 0,
             alt: state_bits & self.alt != 0,
             logo: state_bits & self.logo != 0,
-            caps_lock: state_bits & state::LOCK != 0,
+            caps_lock: state_bits & state::LOCK != 0 && self.lock == LockMode::Caps,
             num_lock: self.num_lock != 0 && state_bits & self.num_lock != 0,
         }
     }
@@ -361,34 +387,29 @@ mod tests {
 
     /// A tiny 2-column keymap starting at keycode 8:
     /// 8 a/A, 9 1/!, 10 KP_Home/KP_7, 11 Num_Lock, 12 Alt_L, 13 Super_L,
-    /// 14 lone 'b', 15 lone 'é' (0xe9), 16 Return, 17 lone Unicode 'ж'.
+    /// 14 lone 'b', 15 lone 'é' (0xe9), 16 Return, 17 lone Unicode 'ж',
+    /// 18 Caps_Lock (bound to Lock), 19 Shift_Lock.
     fn map() -> Keymap {
-        let syms = vec![
-            0x61,
-            0x41, //
-            0x31,
-            0x21, //
-            keysym::KP_HOME,
-            0xffb7, //
-            keysym::NUM_LOCK,
-            0, //
-            keysym::ALT_L,
-            keysym::META_L, //
-            keysym::SUPER_L,
-            0, //
-            0x62,
-            0, //
-            0xe9,
-            0, //
-            keysym::RETURN,
-            0, //
-            0x0100_0436,
-            0, //
+        let rows: [[Keysym; 2]; 12] = [
+            [0x61, 0x41],
+            [0x31, 0x21],
+            [keysym::KP_HOME, 0xffb7],
+            [keysym::NUM_LOCK, 0],
+            [keysym::ALT_L, keysym::META_L],
+            [keysym::SUPER_L, 0],
+            [0x62, 0],
+            [0xe9, 0],
+            [keysym::RETURN, 0],
+            [0x0100_0436, 0],
+            [keysym::CAPS_LOCK, 0],
+            [keysym::SHIFT_LOCK, 0],
         ];
+        let syms = rows.concat();
         let mut mods: [Vec<u8>; 8] = Default::default();
         mods[3] = vec![12]; // Mod1 = Alt
         mods[4] = vec![11]; // Mod2 = NumLock
         mods[6] = vec![13]; // Mod4 = Super
+        mods[1] = vec![18]; // Lock = Caps_Lock
         Keymap::new(8, 2, syms, &mods)
     }
 
@@ -399,6 +420,24 @@ mod tests {
         assert_eq!(m.lookup(8, state::SHIFT).0, Key::Character('A'));
         assert_eq!(m.lookup(9, 0).0, Key::Character('1'));
         assert_eq!(m.lookup(9, state::SHIFT).0, Key::Character('!'));
+    }
+
+    #[test]
+    fn lock_meaning_follows_its_binding() {
+        let base = map();
+        let with_lock = |kcs: Vec<u8>| {
+            let mut mods: [Vec<u8>; 8] = Default::default();
+            mods[1] = kcs;
+            Keymap::new(8, 2, base.keysyms.clone(), &mods)
+        };
+        let shift_lock = with_lock(vec![19]);
+        assert_eq!(shift_lock.lookup(9, state::LOCK).0, Key::Character('!'), "Shift_Lock shifts digits too");
+        assert_eq!(shift_lock.lookup(8, state::LOCK).0, Key::Character('A'));
+        assert!(!shift_lock.modifiers(state::LOCK).caps_lock);
+        let unbound = with_lock(vec![]);
+        assert_eq!(unbound.lookup(8, state::LOCK).0, Key::Character('a'), "an unbound Lock is ignored");
+        assert!(!unbound.modifiers(state::LOCK).caps_lock);
+        assert!(base.modifiers(state::LOCK).caps_lock);
     }
 
     #[test]

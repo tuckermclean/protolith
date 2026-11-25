@@ -86,9 +86,19 @@ pub enum RawEvent {
     /// `MotionNotify`.
     MotionNotify(InputEvent),
     /// `EnterNotify`.
-    EnterNotify(InputEvent),
+    EnterNotify {
+        /// Position, state and windows.
+        input: InputEvent,
+        /// 0 Normal, 1 Grab, 2 Ungrab.
+        mode: u8,
+    },
     /// `LeaveNotify`.
-    LeaveNotify(InputEvent),
+    LeaveNotify {
+        /// Position, state and windows.
+        input: InputEvent,
+        /// 0 Normal, 1 Grab, 2 Ungrab.
+        mode: u8,
+    },
     /// `FocusIn`.
     FocusIn {
         /// Window.
@@ -229,8 +239,8 @@ pub fn parse_event(buf: &[u8]) -> Option<Event> {
         BUTTON_PRESS => RawEvent::ButtonPress(input(buf)?),
         BUTTON_RELEASE => RawEvent::ButtonRelease(input(buf)?),
         MOTION_NOTIFY => RawEvent::MotionNotify(input(buf)?),
-        ENTER_NOTIFY => RawEvent::EnterNotify(input(buf)?),
-        LEAVE_NOTIFY => RawEvent::LeaveNotify(input(buf)?),
+        ENTER_NOTIFY => RawEvent::EnterNotify { input: input(buf)?, mode: buf.u8_at(30)? },
+        LEAVE_NOTIFY => RawEvent::LeaveNotify { input: input(buf)?, mode: buf.u8_at(30)? },
         FOCUS_IN => RawEvent::FocusIn { window: buf.u32_at(4)?, mode: buf.u8_at(8)? },
         FOCUS_OUT => RawEvent::FocusOut { window: buf.u32_at(4)?, mode: buf.u8_at(8)? },
         EXPOSE => RawEvent::Expose {
@@ -327,11 +337,17 @@ pub(crate) mod tests {
             (4, |e| matches!(e, RawEvent::ButtonPress(_))),
             (5, |e| matches!(e, RawEvent::ButtonRelease(_))),
             (6, |e| matches!(e, RawEvent::MotionNotify(_))),
-            (7, |e| matches!(e, RawEvent::EnterNotify(_))),
-            (8, |e| matches!(e, RawEvent::LeaveNotify(_))),
+            (7, |e| matches!(e, RawEvent::EnterNotify { mode: 0, .. })),
+            (8, |e| matches!(e, RawEvent::LeaveNotify { mode: 0, .. })),
         ] {
             assert!(check(parse_event(&synth(c, 0, &[])).unwrap().event), "code {c}");
         }
+    }
+
+    #[test]
+    fn crossing_mode_is_decoded() {
+        let e = parse_event(&synth(8, 0, &[(30, &[1])])).unwrap().event;
+        assert!(matches!(e, RawEvent::LeaveNotify { mode: 1, .. }));
     }
 
     #[test]

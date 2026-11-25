@@ -8,8 +8,9 @@ and `src/backend/fb.rs` at `9b43fc0`) and rebuilt as a general-purpose crate.
 
 Compared with the code it came from:
 
-- **Connection**: TCP displays (SSH X11 forwarding: `localhost:10`), proper
-  `.Xauthority` matching (family, address, display number, wildcards),
+- **Connection**: TCP displays (SSH X11 forwarding: `localhost:10`), the
+  Linux abstract socket as a fallback, `.Xauthority` matching as libXau does
+  it (file order; family, peer address, display number, wildcards),
   multiple screens.
 - **Protocol correctness**: 64-bit sequence tracking with wraparound, errors
   routed to the request that caused them, pipelined replies, a sync before the
@@ -22,8 +23,9 @@ Compared with the code it came from:
 - **Windows**: several per connection; title, class, icon, size hints,
   undecorated, always-on-top, override-redirect, show/hide, move/resize,
   SHAPE (non-rectangular) windows, window dragging (WM hand-off or self-driven).
-- **Input**: key press/release with Shift/Caps/Num Lock and autorepeat
-  detection, media keys, buttons, wheel, coalesced motion, enter/leave,
+- **Input**: key press/release with Shift/Caps/Shift/Num Lock per the
+  protocol's rules, autorepeat detection (XKB detectable autorepeat, with a
+  core-protocol fallback), media keys, buttons, wheel, coalesced motion, enter/leave,
   focus, close requests, a cross-thread `Waker`.
-- **fbdev**: partial updates with positioned writes, 24 bpp, panning-aware
-  geometry, never writes row padding.
+- **fbdev**: partial updates with positioned writes, 24 bpp, the current
+  mode and live pan offset honored, never writes row padding.

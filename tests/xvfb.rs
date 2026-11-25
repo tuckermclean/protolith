@@ -482,8 +482,23 @@ fn waker_interrupts_a_blocking_wait_from_another_thread() {
         std::thread::sleep(Duration::from_millis(100));
         waker.wake().unwrap();
     });
+    // The real blocking wait. A watchdog turns a lost wake into a test
+    // failure instead of a hung CI job.
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watchdog = {
+        let done = done.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(10));
+            if !done.load(std::sync::atomic::Ordering::SeqCst) {
+                eprintln!("waker test: wait_event() never returned");
+                std::process::exit(101);
+            }
+        })
+    };
     let start = Instant::now();
-    assert_eq!(conn.wait_event_timeout(Duration::from_secs(10)).unwrap(), Some(Event::Wake));
+    assert_eq!(conn.wait_event().unwrap(), Event::Wake);
+    done.store(true, std::sync::atomic::Ordering::SeqCst);
+    drop(watchdog);
     let waited = start.elapsed();
     assert!(waited >= Duration::from_millis(50), "{waited:?}");
     t.join().unwrap();
@@ -584,4 +599,167 @@ fn raw_client_sees_raw_events() {
     }
     let geom = req::parse_geometry(&c.round_trip(&req::get_geometry(wid)).unwrap()).unwrap();
     assert_eq!((geom.width, geom.height, geom.root, geom.depth), (10, 10, root, 24));
+}
+
+// ------------------------------------------------- review regressions
+
+#[test]
+fn a_recreated_window_survives_its_predecessors_late_events() {
+    let Some(x) = xvfb(24, &[], None) else { return };
+    let mut conn = open(&x);
+    let a = conn.create_window(WindowOptions::new(30, 30).position(0, 0)).unwrap();
+    wait_for(&mut conn, |e| matches!(e, Event::Focused { focused: true, .. }));
+    conn.destroy_window(a).unwrap();
+    let b = conn.create_window(WindowOptions::new(30, 30).position(0, 0)).unwrap();
+    let events = pump(&mut conn, Duration::from_millis(200));
+    assert!(!events.iter().any(|e| matches!(e, Event::Focused { window, focused: false } if *window == b)), "{events:?}");
+    let px = pattern(30, 30, 2);
+    conn.present(b, &Frame::xrgb(&px, 30, 30).unwrap()).expect("the new window is still known");
+    assert_shows(&mut conn, b, Rect::from_size(30, 30), &px);
+}
+
+#[test]
+fn present_rect_clips_areas_that_overhang_the_window_or_frame() {
+    let Some(x) = xvfb(24, &[], None) else { return };
+    let mut conn = open(&x);
+    let (w, h) = (40, 30);
+    let win = conn.create_window(WindowOptions::new(w, h).position(0, 0)).unwrap();
+    let mut expected = pattern(w, h, 1);
+    conn.present(win, &Frame::xrgb(&expected, w, h).unwrap()).unwrap();
+
+    let b = vec![0x00ff_00ffu32; (w * h) as usize];
+    let small = vec![0x0000_ff00u32; 10 * 10];
+    let cases: [(Frame<'_>, Rect); 3] = [
+        (Frame::xrgb(&b, w, h).unwrap(), Rect::new(30, -5, 20, 20)),     // past the right and top edges
+        (Frame::xrgb(&small, 10, 10).unwrap(), Rect::new(0, 0, 40, 30)), // larger than the frame
+        (Frame::xrgb(&b, w, h).unwrap(), Rect::new(-5, 20, 12, 5)),      // negative x
+    ];
+    for (frame, area) in &cases {
+        conn.present_rect(win, frame, *area).unwrap();
+        let visible = area.intersect(&frame.bounds()).intersect(&Rect::from_size(w, h));
+        for y in visible.y..visible.y + visible.height as i32 {
+            for x in visible.x..visible.x + visible.width as i32 {
+                expected[(y as u32 * w + x as u32) as usize] = frame.get(x as u32, y as u32).unwrap();
+            }
+        }
+    }
+    assert_shows(&mut conn, win, Rect::from_size(w, h), &expected);
+    let errors: Vec<_> = pump(&mut conn, Duration::from_millis(50)).into_iter().filter(|e| matches!(e, Event::Error(_))).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+#[test]
+fn scrolling_a_sub_area_leaves_everything_outside_it_alone() {
+    let Some(x) = xvfb(24, &[], None) else { return };
+    let mut conn = open(&x);
+    let (w, h) = (40, 20);
+    let win = conn.create_window(WindowOptions::new(w, h).position(0, 0)).unwrap();
+    let px = pattern(w, h, 6);
+    conn.present(win, &Frame::xrgb(&px, w, h).unwrap()).unwrap();
+    let area = Rect::new(10, 0, 20, h);
+    conn.scroll(win, area, -5, 0).unwrap();
+    // Columns 10..25 take 15..30; 25..30 keep stale pixels; the rest is untouched.
+    let expected: Vec<u32> = (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            if (10..25).contains(&x) {
+                px[(y * w + x + 5) as usize]
+            } else {
+                px[i as usize]
+            }
+        })
+        .collect();
+    assert_shows(&mut conn, win, Rect::from_size(w, h), &expected);
+    assert_eq!(conn.read_pixels(win, Rect::from_size(w, h)).unwrap(), expected, "the backing store, which repaints exposures, agrees");
+}
+
+#[test]
+fn connects_through_the_abstract_socket_when_the_file_is_gone() {
+    let Some(x) = xvfb(24, &[], None) else { return };
+    let path = format!("/tmp/.X11-unix/X{}", x.display);
+    std::fs::remove_file(&path).expect("remove our own Xvfb's socket file");
+    let mut conn = open(&x);
+    let win = conn.create_window(WindowOptions::new(4, 4).position(0, 0)).unwrap();
+    let px = pattern(4, 4, 1);
+    conn.present(win, &Frame::xrgb(&px, 4, 4).unwrap()).unwrap();
+    assert_shows(&mut conn, win, Rect::from_size(4, 4), &px);
+}
+
+fn xprop(x: &Xvfb, win: WindowId, props: &[&str]) -> Option<String> {
+    let out = Command::new("xprop").args(["-display", &name(x), "-id", &format!("{:#x}", win.xid())]).args(props).output().ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[test]
+fn icon_decorations_and_always_on_top_reach_the_server() {
+    let Some(x) = xvfb(24, &[], None) else { return };
+    let mut conn = open(&x);
+    let win = conn.create_window(WindowOptions::new(20, 20).position(0, 0)).unwrap();
+    pump(&mut conn, Duration::from_millis(50));
+    conn.set_icon(win, &Frame::xrgb(&[0x112233, 0x445566], 2, 1).unwrap()).unwrap();
+    conn.set_decorations(win, false).unwrap();
+    conn.set_always_on_top(win, true).unwrap();
+    conn.client().sync().unwrap();
+    fn prop32(conn: &mut Connection, win: WindowId, name: &str) -> Vec<u32> {
+        let atom = intern(conn.client(), name);
+        req::parse_property(&conn.client().round_trip(&req::get_property(false, win.xid(), atom, 0, 0, 64)).unwrap()).unwrap().as_u32s().unwrap()
+    }
+    let prop = |conn: &mut Connection, name: &str| prop32(conn, win, name);
+    assert_eq!(prop(&mut conn, "_NET_WM_ICON"), [2, 1, 0xff11_2233, 0xff44_5566]);
+    assert_eq!(prop(&mut conn, "_MOTIF_WM_HINTS"), [2, 0, 0, 0, 0]);
+    let above = intern(conn.client(), "_NET_WM_STATE_ABOVE");
+    assert_eq!(prop(&mut conn, "_NET_WM_STATE"), [above], "no WM: the state is set directly");
+    conn.set_always_on_top(win, false).unwrap();
+    conn.set_decorations(win, true).unwrap();
+    assert!(prop(&mut conn, "_NET_WM_STATE").is_empty());
+    assert_eq!(prop(&mut conn, "_MOTIF_WM_HINTS"), [2, 0, 1, 0, 0]);
+    if let Some(text) = xprop(&x, win, &["_NET_WM_ICON"]) {
+        assert!(text.contains("Icon (2 x 1)") || text.contains("_NET_WM_ICON(CARDINAL)"), "{text}");
+    }
+}
+
+#[test]
+fn caps_lock_and_server_autorepeat() {
+    let Some(x) = xvfb(24, &[], None) else { return };
+    let mut conn = open(&x);
+    let win = conn.create_window(WindowOptions::new(50, 50).position(0, 0)).unwrap();
+    wait_for(&mut conn, |e| matches!(e, Event::Focused { focused: true, .. }));
+    let xt = Xtest::new(&mut conn);
+    let (a, _) = conn.keymap().keycode_for(u32::from('a')).unwrap();
+    let (caps, _) = conn.keymap().keycode_for(0xffe5).expect("Caps_Lock on the keymap");
+
+    // Caps Lock on: 'a' types 'A' and the modifier says so.
+    for (kind, code) in [(2, caps), (3, caps), (2, a), (3, a), (2, caps), (3, caps)] {
+        xt.fake(&mut conn, kind, code, 0, 0);
+    }
+    let typed: Vec<(Key, bool)> = pump(&mut conn, Duration::from_millis(300))
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Key { window, key: Key::Character(c), pressed: true, modifiers, .. } if window == win => Some((Key::Character(c), modifiers.caps_lock)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(typed, [(Key::Character('A'), true)]);
+
+    // Hold a key past the server's autorepeat delay: the repeats arrive as
+    // presses flagged `repeat`, with no releases between them.
+    xt.fake(&mut conn, 2, a, 0, 0);
+    let held = pump(&mut conn, Duration::from_millis(1200));
+    xt.fake(&mut conn, 3, a, 0, 0);
+    let after = pump(&mut conn, Duration::from_millis(200));
+    let keys: Vec<(bool, bool)> = held
+        .iter()
+        .chain(&after)
+        .filter_map(|e| match *e {
+            Event::Key { key: Key::Character('a'), pressed, repeat, .. } => Some((pressed, repeat)),
+            _ => None,
+        })
+        .collect();
+    if keys.len() <= 2 {
+        eprintln!("skipping autorepeat half: this server does not autorepeat XTEST keys ({keys:?})");
+        return;
+    }
+    assert_eq!(keys.first(), Some(&(true, false)));
+    assert_eq!(keys.last(), Some(&(false, false)));
+    assert!(keys[1..keys.len() - 1].iter().all(|k| *k == (true, true)), "{keys:?}");
 }

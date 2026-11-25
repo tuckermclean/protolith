@@ -9,7 +9,8 @@ is written directly against the X11 wire protocol and the framebuffer device:
 - **no dependencies** — `std` only; no Xlib, no xcb, no C toolchain;
 - **no `unsafe`** — `#![forbid(unsafe_code)]`, the whole crate;
 - **no surprises** — every byte it sends or parses is covered by a test, and
-  every feature is tested end to end against a real X server.
+  every feature that does not need a window manager is tested end to end
+  against a real X server.
 
 ```rust,no_run
 use protolith::x11::{Connection, Event, Key, WindowOptions};
@@ -36,7 +37,7 @@ fn main() -> protolith::Result<()> {
 | **Connect** | `$DISPLAY` over the local socket or TCP — including SSH X11 forwarding (`localhost:10`) — with `MIT-MAGIC-COOKIE-1` from `.Xauthority`, matched the way Xlib matches it. |
 | **Draw** | Present `0x00RRGGBB` or RGBA frames, whole or by rectangle. Converted to any TrueColor visual of 8–32 bits in either byte order; split under the server's request limit. Each window keeps its last frame on the server, so exposure never needs your help. Server-side scrolling. Read-back. |
 | **Windows** | Several per connection. Title, class, icon, fixed size, no decorations, always-on-top, override-redirect, show/hide, move/resize. **Non-rectangular** windows via SHAPE, with a mask-to-rectangles helper. **Window dragging** for borderless windows: handed to the window manager when it can, done by protolith when there is none. |
-| **Input** | Keys (Shift, Caps Lock, Num Lock, autorepeat detection, media keys), buttons, wheel, coalesced motion with root coordinates, enter/leave, focus, close requests. A `Waker` to interrupt the event loop from another thread. |
+| **Input** | Keys (Shift, Caps/Shift Lock, Num Lock, autorepeat detection via XKB where available, media keys), buttons, wheel, coalesced motion with root coordinates, enter/leave, focus, close requests. A `Waker` to interrupt the event loop from another thread. |
 | **Framebuffer** | `/dev/fbN` at 16/24/32 bpp with partial updates, for machines with no X at all. |
 | **Escape hatches** | `x11::Client` sends any request and collects any reply, with sequence numbers, errors and events demultiplexed for you. `x11::proto` is the protocol as pure functions. |
 
@@ -82,10 +83,14 @@ Four tiers:
    replies, errors routed by sequence number, 70 000-request wraparound,
    hostile byte streams, resize bursts, drags.
 3. **End to end** — each test starts its own Xvfb (at 24, 16 and 8 bits deep,
-   over Unix sockets and TCP, with and without cookies), then checks pixels by
-   reading the window back with `GetImage`, injects real input with XTEST, and
-   cross-checks window properties with `xprop` — oracles that are not
-   protolith checking itself.
+   over Unix sockets, the abstract socket and TCP, with and without cookies,
+   including lookup through `$XAUTHORITY`), then checks pixels by reading the
+   window back with `GetImage`, injects real input with XTEST (keys, Caps
+   Lock, held-key autorepeat, buttons, wheel, drags), and cross-checks window
+   properties with `xprop` — oracles that are not protolith checking itself.
+   Not covered end to end, because Xvfb runs no window manager: the
+   `_NET_WM_MOVERESIZE` hand-off and always-on-top requests to a running WM
+   (both are byte-checked against the fake server).
 4. **Framebuffer** — a scratch device file and fake sysfs, verifying every
    byte written and every byte that must not be.
 

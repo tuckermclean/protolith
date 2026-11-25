@@ -31,6 +31,8 @@ pub(crate) struct Script {
     pub(crate) refuse: Option<String>,
     /// Answer requests with these major opcodes with a `BadMatch` error.
     pub(crate) fail_opcodes: Vec<u8>,
+    /// `(opcode, n)`: fail that opcode's n-th (0-based) and later uses.
+    pub(crate) fail_from: Vec<(u8, usize)>,
     /// Advertised maximum request length (words).
     pub(crate) max_request_words: u16,
     /// Pretend a window manager is running.
@@ -56,6 +58,7 @@ impl Default for Script {
         Script {
             refuse: None,
             fail_opcodes: vec![],
+            fail_from: vec![],
             max_request_words: 65535,
             window_manager: false,
             screen: FakeScreen::Depth24,
@@ -252,6 +255,21 @@ fn serve(mut stream: UnixStream, writer: Arc<Mutex<UnixStream>>, state: Arc<Mute
 
     // --- requests
     let mut seq: u16 = 0;
+    let mut uses: HashMap<u8, usize> = HashMap::new();
+    let bits_per_pixel = |depth: u8| match depth {
+        24 | 32 => 32usize,
+        16 => 16,
+        _ => 8,
+    };
+    let error = |code: u8, seq: u16, req: &[u8]| {
+        let mut e = vec![0u8, code];
+        e.extend_from_slice(&seq.to_le_bytes());
+        e.extend_from_slice(&req.u32_at(4).unwrap_or(0).to_le_bytes());
+        e.extend_from_slice(&0u16.to_le_bytes());
+        e.push(req[0]);
+        e.resize(32, 0);
+        e
+    };
     loop {
         let mut h = [0u8; 4];
         if stream.read_exact(&mut h).is_err() {
@@ -267,15 +285,22 @@ fn serve(mut stream: UnixStream, writer: Arc<Mutex<UnixStream>>, state: Arc<Mute
         let op = req[0];
         state.lock().unwrap().log.requests.push(req.clone());
 
-        if script.fail_opcodes.contains(&op) {
-            let mut e = vec![0u8, 8];
-            e.extend_from_slice(&seq.to_le_bytes());
-            e.extend_from_slice(&req.u32_at(4).unwrap_or(0).to_le_bytes());
-            e.extend_from_slice(&0u16.to_le_bytes());
-            e.push(op);
-            e.resize(32, 0);
-            send(&e);
+        let n = uses.entry(op).or_insert(0);
+        let nth = *n;
+        *n += 1;
+        if script.fail_opcodes.contains(&op) || script.fail_from.iter().any(|&(o, from)| o == op && nth >= from) {
+            send(&error(8, seq, &req));
             continue;
+        }
+        if op == opcode::PUT_IMAGE {
+            // Like a real server: the data must be exactly `height` rows of
+            // the format's padded stride, or the request is BadLength.
+            let (w, h, depth) = (usize::from(req.u16_at(12).unwrap()), usize::from(req.u16_at(14).unwrap()), req[21]);
+            let stride = (w * bits_per_pixel(depth)).div_ceil(32) * 4;
+            if req.len() - 24 != stride * h {
+                send(&error(16, seq, &req));
+                continue;
+            }
         }
 
         let r = match op {

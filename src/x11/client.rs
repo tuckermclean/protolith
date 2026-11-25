@@ -156,7 +156,13 @@ impl Client {
         match &display.transport {
             Transport::Unix => {
                 let path = display.socket_path();
-                let stream = UnixStream::connect(&path).map_err(|e| Error::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display()))))?;
+                let stream = match UnixStream::connect(&path) {
+                    Ok(s) => s,
+                    // Linux servers also listen on the abstract socket of the
+                    // same name, which survives a missing /tmp (containers
+                    // that share only the network namespace, a cleaned /tmp).
+                    Err(e) => connect_abstract(&path).map_err(|_| Error::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display()))))?,
+                };
                 let auth = auth.unwrap_or_else(|| Auth::load(display, &[]));
                 Client::handshake(Stream::Unix(stream), Some(display.clone()), auth)
             }
@@ -169,8 +175,10 @@ impl Client {
                     match TcpStream::connect_timeout(addr, Duration::from_secs(10)) {
                         Ok(stream) => {
                             stream.set_nodelay(true)?;
-                            let ips: Vec<_> = addrs.iter().map(|a| a.ip()).collect();
-                            let auth = auth.unwrap_or_else(|| Auth::load(display, &ips));
+                            // Credentials are filed under the address actually
+                            // reached, as libX11 does with getpeername().
+                            let peer = stream.peer_addr().map_or(addr.ip(), |p| p.ip());
+                            let auth = auth.unwrap_or_else(|| Auth::load(display, &[peer]));
                             return Client::handshake(Stream::Tcp(stream), Some(display.clone()), auth);
                         }
                         Err(e) => last = e,
@@ -371,6 +379,12 @@ impl Client {
             Some(Message::Error(e)) => Err(Error::X(e)),
             _ => Ok(()),
         }
+    }
+
+    /// Remove queued errors caused by requests with sequence ≥ `since`,
+    /// leaving events and older errors in place.
+    pub(crate) fn discard_errors_since(&mut self, since: u64) {
+        self.messages.retain(|m| !matches!(m, Message::Error(e) if e.sequence >= since));
     }
 
     /// Sequence number of the last request sent.
@@ -620,6 +634,22 @@ impl AsRawFd for Client {
     fn as_raw_fd(&self) -> RawFd {
         self.stream.as_fd().as_raw_fd()
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn connect_abstract(path: &std::path::Path) -> io::Result<UnixStream> {
+    #[cfg(target_os = "android")]
+    use std::os::android::net::SocketAddrExt;
+    #[cfg(target_os = "linux")]
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::ffi::OsStrExt;
+    let addr = std::os::unix::net::SocketAddr::from_abstract_name(path.as_os_str().as_bytes())?;
+    UnixStream::connect_addr(&addr)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn connect_abstract(_: &std::path::Path) -> io::Result<UnixStream> {
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 fn read_exact(stream: &mut Stream, buf: &mut [u8]) -> Result<()> {

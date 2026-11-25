@@ -40,5 +40,9 @@ name = "xvfb"
 required-features = ["x11"]
 
 [[test]]
+name = "xauth"
+required-features = ["x11"]
+
+[[test]]
 name = "fbdev"
 required-features = ["fbdev"]

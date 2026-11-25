@@ -8,6 +8,10 @@
 //! Positioned writes still allow partial updates: [`Framebuffer::present_rect`]
 //! touches only the rows and columns of its rectangle.
 //!
+//! The visible area is the current `mode` within the `virtual_size`,
+//! offset by the current `pan` (re-read on every present, since the console
+//! scrolls by panning).
+//!
 //! Pixel layout is inferred from `bits_per_pixel`: 32 → `XRGB8888`, 24 →
 //! packed `RGB888`, 16 → `RGB565`, all little-endian (every x86 and ARM
 //! console framebuffer in practice). Other depths are refused.
@@ -60,8 +64,8 @@ fn parse_pair(s: &str) -> Result<(u32, u32)> {
     Ok((parse_u32(w, "virtual_size width")?, parse_u32(h, "virtual_size height")?))
 }
 
-/// The visible resolution from the first line of the sysfs `modes` file
-/// (`U:1024x768p-75`), if it parses.
+/// The visible resolution from a sysfs mode line (`U:1024x768p-75`), if
+/// it parses.
 fn parse_mode(modes: &str) -> Option<(u32, u32)> {
     let line = modes.lines().next()?;
     let spec = line.split_once(':').map_or(line, |(_, s)| s);
@@ -70,12 +74,12 @@ fn parse_mode(modes: &str) -> Option<(u32, u32)> {
     Some((w.trim().parse().ok()?, h.parse().ok()?))
 }
 
-/// Build [`FbInfo`] from the contents of the sysfs files. `modes` (the
-/// visible mode) may be empty, in which case the virtual size is used.
-/// Validates that a row fits in the stride.
-pub fn parse_fb_info(virtual_size: &str, bits_per_pixel: &str, stride: &str, modes: &str) -> Result<FbInfo> {
+/// Build [`FbInfo`] from the contents of the sysfs files. `mode` (the
+/// current mode, e.g. `U:1024x768p-75`) may be empty, in which case the
+/// virtual size is used. Validates that a row fits in the stride.
+pub fn parse_fb_info(virtual_size: &str, bits_per_pixel: &str, stride: &str, mode: &str) -> Result<FbInfo> {
     let (vw, vh) = parse_pair(virtual_size)?;
-    let (width, height) = parse_mode(modes).filter(|&(w, h)| w <= vw && h <= vh && w > 0 && h > 0).unwrap_or((vw, vh));
+    let (width, height) = parse_mode(mode).filter(|&(w, h)| w <= vw && h <= vh && w > 0 && h > 0).unwrap_or((vw, vh));
     let info = FbInfo { width, height, bits_per_pixel: parse_u32(bits_per_pixel, "bits_per_pixel")?, stride: parse_u32(stride, "stride")? };
     let row = u64::from(info.width) * u64::from(info.bits_per_pixel.div_ceil(8));
     if row > u64::from(info.stride) {
@@ -89,8 +93,14 @@ pub fn read_fb_info(sysfs_dir: &Path) -> Result<FbInfo> {
     let read = |name: &str| {
         std::fs::read_to_string(sysfs_dir.join(name)).map_err(|e| Error::Io(std::io::Error::new(e.kind(), format!("{}: {e}", sysfs_dir.join(name).display()))))
     };
-    let modes = std::fs::read_to_string(sysfs_dir.join("modes")).unwrap_or_default();
-    parse_fb_info(&read("virtual_size")?, &read("bits_per_pixel")?, &read("stride")?, &modes)
+    // `mode` is the current mode; `modes` lists the driver's modes with the
+    // boot/preferred one first, which is only a fallback.
+    let mode = std::fs::read_to_string(sysfs_dir.join("mode"))
+        .ok()
+        .filter(|m| parse_mode(m).is_some())
+        .or_else(|| std::fs::read_to_string(sysfs_dir.join("modes")).ok())
+        .unwrap_or_default();
+    parse_fb_info(&read("virtual_size")?, &read("bits_per_pixel")?, &read("stride")?, &mode)
 }
 
 /// An open framebuffer device.
@@ -101,6 +111,9 @@ pub struct Framebuffer {
     info: FbInfo,
     format: PixelFormat,
     scratch: Vec<u8>,
+    /// The sysfs `pan` file (`xoffset,yoffset` of the visible area within
+    /// the virtual screen), when the driver has one.
+    pan: Option<PathBuf>,
 }
 
 impl Framebuffer {
@@ -124,7 +137,8 @@ impl Framebuffer {
             .read(true)
             .open(device)
             .map_err(|e| Error::Io(std::io::Error::new(e.kind(), format!("{}: {e}", device.display()))))?;
-        Ok(Framebuffer { device: file, path: device.to_path_buf(), info, format, scratch: Vec::new() })
+        let pan = Some(sysfs_dir.join("pan")).filter(|p| p.exists());
+        Ok(Framebuffer { device: file, path: device.to_path_buf(), info, format, scratch: Vec::new(), pan })
     }
 
     /// Geometry.
@@ -157,7 +171,10 @@ impl Framebuffer {
         if done.is_empty() {
             return Ok(());
         }
-        let offset = |y: i32, x: i32| y as u64 * stride as u64 + x as u64 * bpp as u64;
+        // The console pans to scroll (vesafb ypan, fbcon): the visible area
+        // starts at the current pan offset, which can change at any time.
+        let (px, py) = self.pan.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| parse_pair(&t).ok()).unwrap_or((0, 0));
+        let offset = |y: i32, x: i32| (u64::from(py) + y as u64) * stride as u64 + (u64::from(px) + x as u64) * bpp as u64;
         let r = if full_rows && done.width == area.width {
             self.device.write_all_at(&self.scratch, offset(done.y, 0))
         } else {

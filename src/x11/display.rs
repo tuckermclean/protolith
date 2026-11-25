@@ -218,17 +218,15 @@ pub fn auth_addresses(display: &DisplayName, hostname: &str, resolved: &[IpAddr]
 ///
 /// An entry matches when its family/address is one of `addresses` (or its
 /// family is `WILD`), its display number equals `display` (or is empty),
-/// and its protocol is one this client speaks. Among matches the earliest
-/// candidate address wins, then file order — Xlib's rule.
+/// and its protocol is one this client speaks. The first match in file
+/// order wins — libXau's rule (`XauGetBestAuthByAddr`).
 pub fn select_auth<'a>(entries: &'a [AuthEntry], addresses: &[(u16, Vec<u8>)], display: u16) -> Option<&'a AuthEntry> {
     let number = display.to_string();
-    let usable = |e: &&AuthEntry| e.name == MIT_MAGIC_COOKIE_1 && (e.number.is_empty() || e.number == number.as_bytes());
-    for (fam, addr) in addresses {
-        if let Some(e) = entries.iter().filter(usable).find(|e| e.family == *fam && e.address == *addr) {
-            return Some(e);
-        }
-    }
-    entries.iter().filter(usable).find(|e| e.family == family::WILD)
+    entries.iter().find(|e| {
+        e.name == MIT_MAGIC_COOKIE_1
+            && (e.number.is_empty() || e.number == number.as_bytes())
+            && (e.family == family::WILD || addresses.iter().any(|(f, a)| *f == e.family && *a == e.address))
+    })
 }
 
 /// Credentials for the connection-setup request.
@@ -389,6 +387,13 @@ mod tests {
         let any_display = vec![entry(family::LOCAL, b"me", "", 8)];
         assert_eq!(select_auth(&any_display, &addrs, 42).map(|e| e.data[0]), Some(8));
         assert!(select_auth(&wild, &addrs, 1).is_none(), "wrong display number");
+    }
+
+    #[test]
+    fn file_order_wins_like_libxau() {
+        let entries = vec![entry(family::WILD, b"", "0", 1), entry(family::LOCAL, b"me", "0", 2)];
+        let addrs = auth_addresses(&DisplayName::parse(":0").unwrap(), "me", &[]);
+        assert_eq!(select_auth(&entries, &addrs, 0).map(|e| e.data[0]), Some(1));
     }
 
     #[test]

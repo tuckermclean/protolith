@@ -18,6 +18,10 @@ impl Drop for Scratch {
 /// A fake fb: `width x height` at `bpp`, rows `stride` bytes apart, the
 /// device pre-filled with `0xAA` so untouched bytes are visible.
 fn fake_fb(width: u32, height: u32, bpp: u32, stride: u32, modes: Option<&str>) -> (Scratch, PathBuf, PathBuf) {
+    fake_fb_with(width, height, bpp, stride, &[("modes", modes)])
+}
+
+fn fake_fb_with(width: u32, height: u32, bpp: u32, stride: u32, files: &[(&str, Option<&str>)]) -> (Scratch, PathBuf, PathBuf) {
     use std::sync::atomic::{AtomicU32, Ordering};
     static N: AtomicU32 = AtomicU32::new(0);
     let root = std::env::temp_dir().join(format!("protolith-fb-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
@@ -26,8 +30,10 @@ fn fake_fb(width: u32, height: u32, bpp: u32, stride: u32, modes: Option<&str>) 
     std::fs::write(sysfs.join("virtual_size"), format!("{width},{height}\n")).unwrap();
     std::fs::write(sysfs.join("bits_per_pixel"), format!("{bpp}\n")).unwrap();
     std::fs::write(sysfs.join("stride"), format!("{stride}\n")).unwrap();
-    if let Some(m) = modes {
-        std::fs::write(sysfs.join("modes"), m).unwrap();
+    for (name, contents) in files {
+        if let Some(c) = contents {
+            std::fs::write(sysfs.join(name), c).unwrap();
+        }
     }
     let dev = root.join("dev-fb0");
     std::fs::write(&dev, vec![0xAA; (stride * height) as usize]).unwrap();
@@ -146,4 +152,29 @@ fn clean_errors() {
 
     std::fs::write(sysfs.join("stride"), "8\n").unwrap();
     assert!(matches!(Framebuffer::open_paths(&sysfs, &missing), Err(Error::Protocol(_))), "stride shorter than a row");
+}
+
+#[test]
+fn the_current_mode_wins_over_the_mode_list() {
+    // `modes` lists the preferred 8x12 first; `mode` says 8x6 is in use.
+    let (_s, sysfs, dev) = fake_fb_with(8, 12, 32, 32, &[("modes", Some("U:8x12p-60\nU:8x6p-60\n")), ("mode", Some("U:8x6p-60\n"))]);
+    let fb = Framebuffer::open_paths(&sysfs, &dev).unwrap();
+    assert_eq!(Present::size(&fb).unwrap(), (8, 6));
+}
+
+#[test]
+fn presents_land_at_the_current_pan_offset() {
+    let (_s, sysfs, dev) = fake_fb_with(8, 12, 32, 32, &[("mode", Some("U:8x6p-60\n")), ("pan", Some("0,6\n"))]);
+    let mut fb = Framebuffer::open_paths(&sysfs, &dev).unwrap();
+    fb.clear(0x0000ff).unwrap();
+    let bytes = std::fs::read(&dev).unwrap();
+    assert!(bytes[..6 * 32].iter().all(|&b| b == 0xAA), "the panned-away half is untouched");
+    assert!(bytes[6 * 32..].chunks(4).all(|p| p == [0xff, 0, 0, 0]));
+
+    // The console scrolls back to 0,0: the next present follows it.
+    std::fs::write(sysfs.join("pan"), "0,0\n").unwrap();
+    let px = vec![0x00ff00u32; 8 * 6];
+    fb.present_rect(&Frame::xrgb(&px, 8, 6).unwrap(), Rect::new(2, 1, 3, 2)).unwrap();
+    let bytes = std::fs::read(&dev).unwrap();
+    assert_eq!(&bytes[32 + 8..32 + 12], &[0, 0xff, 0, 0]);
 }

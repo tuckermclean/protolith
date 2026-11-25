@@ -8,7 +8,8 @@
 //! - [`proto`] — the protocol itself as pure encode/decode functions, no
 //!   I/O at all.
 //!
-//! The core protocol plus the SHAPE extension is all protolith speaks. It
+//! The core protocol plus the SHAPE extension is all protolith needs; it
+//! also asks XKB, when present, for detectable autorepeat. It
 //! connects over the local Unix socket or TCP (including SSH X11
 //! forwarding), authenticates with `MIT-MAGIC-COOKIE-1`, and draws to any
 //! TrueColor visual of 8 to 32 bits, in either image byte order.
