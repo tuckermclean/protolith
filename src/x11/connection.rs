@@ -24,6 +24,14 @@ impl WindowId {
     pub fn xid(&self) -> Xid {
         self.0
     }
+
+    /// The id of an X window, for building [`Event`]s in tests of code
+    /// that handles them. Only ids from [`Connection::create_window`]
+    /// name windows a connection can use; for any other, its methods
+    /// return an error.
+    pub const fn from_xid(xid: Xid) -> WindowId {
+        WindowId(xid)
+    }
 }
 
 /// How a new window should look and behave.
@@ -308,9 +316,10 @@ struct Atoms {
     net_supported: Atom,
     motif_wm_hints: Atom,
     wake: Atom,
+    wm_change_state: Atom,
 }
 
-const ATOM_NAMES: [&str; 14] = [
+const ATOM_NAMES: [&str; 15] = [
     "WM_PROTOCOLS",
     "WM_DELETE_WINDOW",
     "WM_CLIENT_MACHINE",
@@ -325,10 +334,11 @@ const ATOM_NAMES: [&str; 14] = [
     "_NET_SUPPORTED",
     "_MOTIF_WM_HINTS",
     "_PROTOLITH_WAKE",
+    "WM_CHANGE_STATE",
 ];
 
 impl Atoms {
-    fn from_list(a: &[Atom; 14]) -> Atoms {
+    fn from_list(a: &[Atom; 15]) -> Atoms {
         Atoms {
             wm_protocols: a[0],
             wm_delete_window: a[1],
@@ -344,6 +354,7 @@ impl Atoms {
             net_supported: a[11],
             motif_wm_hints: a[12],
             wake: a[13],
+            wm_change_state: a[14],
         }
     }
 }
@@ -458,7 +469,7 @@ impl Connection {
         let root_cookie = client.send_with_reply(&req::get_window_attributes(screen.root))?;
         let xkb_cookie = client.send_with_reply(&req::query_extension(req::xkb::NAME))?;
 
-        let mut atoms = [0; 14];
+        let mut atoms = [0; 15];
         for (slot, c) in atoms.iter_mut().zip(atom_cookies) {
             *slot = req::parse_intern_atom(&client.wait_reply(c)?).ok_or_else(|| Error::Protocol("short InternAtom reply".into()))?;
         }
@@ -749,6 +760,20 @@ impl Connection {
                 self.client.send(&req::configure_window(window.0, &req::ConfigureWindow { stack_mode: Some(req::StackMode::Above), ..Default::default() }))?;
             }
         }
+        self.client.flush()
+    }
+
+    /// Minimize (iconify) the window: ask the window manager to hide it
+    /// until the user brings it back from the taskbar or dock. The way
+    /// back is the window manager's, so without one this does nothing.
+    pub fn minimize(&mut self, window: WindowId) -> Result<()> {
+        let mapped = self.state(window)?.mapped;
+        if !mapped || !self.has_wm {
+            return Ok(());
+        }
+        // ICCCM 4.1.4: WM_CHANGE_STATE with IconicState (3), sent to the root.
+        let ev = req::client_message(window.0, self.atoms.wm_change_state, [3, 0, 0, 0, 0]);
+        self.client.send(&req::send_event(false, self.root, event_mask::SUBSTRUCTURE_REDIRECT | event_mask::SUBSTRUCTURE_NOTIFY, &ev))?;
         self.client.flush()
     }
 
@@ -1838,6 +1863,31 @@ mod tests {
         let send = log.with_opcode(opcode::SEND_EVENT);
         assert_eq!(send.len(), 1);
         assert_eq!(u32_at(&send[0][12..], 12), 1, "_NET_WM_STATE_ADD");
+    }
+
+    #[test]
+    fn minimize_asks_the_wm_and_needs_one() {
+        let (mut conn, server) = open(Script { window_manager: true, ..Default::default() });
+        let win = conn.create_window(WindowOptions::new(5, 5)).unwrap();
+        server.push_event(synth(19, 0, &[(8, &win.xid().to_le_bytes())]));
+        assert_eq!(conn.wait_event_timeout(Duration::from_millis(50)).unwrap(), None);
+        conn.minimize(win).unwrap();
+        assert!(conn.minimize(WindowId::from_xid(0x1234)).is_err(), "not our window");
+        conn.client().sync().unwrap();
+        let change_state = server.atom("WM_CHANGE_STATE");
+        let log = server.finish();
+        let send = log.with_opcode(opcode::SEND_EVENT);
+        assert_eq!(send.len(), 1);
+        assert_eq!(u32_at(send[0], 4), ROOT, "sent to the root");
+        assert_eq!(u32_at(&send[0][12..], 4), win.xid());
+        assert_eq!(u32_at(&send[0][12..], 8), change_state);
+        assert_eq!(u32_at(&send[0][12..], 12), 3, "IconicState");
+
+        let (mut conn, server) = open(Script::default());
+        let win = conn.create_window(WindowOptions::new(5, 5)).unwrap();
+        conn.minimize(win).unwrap();
+        conn.client().sync().unwrap();
+        assert!(server.finish().with_opcode(opcode::SEND_EVENT).is_empty(), "no WM: nothing to ask");
     }
 
     #[test]

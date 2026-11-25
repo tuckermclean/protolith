@@ -36,7 +36,7 @@ fn main() -> protolith::Result<()> {
 |---|---|
 | **Connect** | `$DISPLAY` over the local socket or TCP — including SSH X11 forwarding (`localhost:10`) — with `MIT-MAGIC-COOKIE-1` from `.Xauthority`, matched the way Xlib matches it. |
 | **Draw** | Present `0x00RRGGBB` or RGBA frames, whole or by rectangle. Converted to any TrueColor visual of 8–32 bits in either byte order; split under the server's request limit. Each window keeps its last frame on the server, so exposure never needs your help. Server-side scrolling. Read-back. |
-| **Windows** | Several per connection. Title, class, icon, fixed size, no decorations, always-on-top, override-redirect, show/hide, move/resize. **Non-rectangular** windows via SHAPE, with a mask-to-rectangles helper. **Window dragging** for borderless windows: handed to the window manager when it can, done by protolith when there is none. |
+| **Windows** | Several per connection. Title, class, icon, fixed size, no decorations, always-on-top, override-redirect, show/hide, minimize, move/resize. **Non-rectangular** windows via SHAPE, with a mask-to-rectangles helper. **Window dragging** for borderless windows: handed to the window manager when it can, done by protolith when there is none. |
 | **Input** | Keys (Shift, Caps/Shift Lock, Num Lock, autorepeat detection via XKB where available, media keys), buttons, wheel, coalesced motion with root coordinates, enter/leave, focus, close requests. A `Waker` to interrupt the event loop from another thread. |
 | **Canvas** *(feature `canvas`)* | Software drawing on an owned image: fills, clipping, alpha blending (exactly rounded), sprite blits — copied, color-keyed or alpha-blended — and nearest-neighbor scaling, all total over any coordinates. Feature `bmp` decodes BMP sprite sheets (1/4/8/16/24/32-bit, RLE8 and RLE4, both row orders, Windows and OS/2 headers) — checked pixel for pixel against an independent decoder on a real classic skin. |
 | **Text** *(feature `font`)* | A `Font` trait with two kinds: sprite-sheet fonts cut from a skin image (any cell size, any character order, color key or copy), and a Terminus Font subset (ASCII + Latin-1) drawn in any color — each size and weight its own feature (`font-terminus-16` is 3 KB of glyphs). |
@@ -94,8 +94,8 @@ Four tiers:
    Lock, held-key autorepeat, buttons, wheel, drags), and cross-checks window
    properties with `xprop` — oracles that are not protolith checking itself.
    Not covered end to end, because Xvfb runs no window manager: the
-   `_NET_WM_MOVERESIZE` hand-off and always-on-top requests to a running WM
-   (both are byte-checked against the fake server).
+   `_NET_WM_MOVERESIZE` hand-off, always-on-top and minimize requests to a
+   running WM (all byte-checked against the fake server).
 4. **Framebuffer** — a scratch device file and fake sysfs, verifying every
    byte written and every byte that must not be.
 

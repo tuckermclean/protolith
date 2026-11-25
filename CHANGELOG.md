@@ -76,5 +76,10 @@ Compared with the code it came from:
   Priced: under 1 KB more than the default bevel drawing.
 - **`Event::Button` carries the server `time`**, so double clicks can be
   detected.
+- **`Connection::minimize`** (ICCCM `WM_CHANGE_STATE` to IconicState; a
+  borderless window has no other way to be minimized; does nothing without
+  a window manager, which is what would bring it back), and
+  **`WindowId::from_xid`**, so code that handles events can be tested
+  with events built by hand. Both found missing while building phonolite.
 - **fbdev**: partial updates with positioned writes, 24 bpp, the current
   mode and live pan offset honored, never writes row padding.

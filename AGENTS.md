@@ -106,8 +106,13 @@ copied skin assets).
    `~/Downloads/base-2.91.wsz` is reference material only: never vendor
    it or anything extracted from it.
 
-The UI layer is complete. Natural next step, to agree with the user
-first: the Stele rewire below.
+The UI layer is complete, and the player exists: **phonolite**
+(`~/gitrepos/phonolite`, path dependency on this crate) — docked shaped
+window, sprite-skinned widgets, popups, dialogs from the stock widgets. It
+needed two small additions here (`Connection::minimize`,
+`WindowId::from_xid`); anything else it lacks is a protolith request to
+agree with the user, not a workaround there. Natural next step, to agree
+with the user first: the Stele rewire below.
 
 Out of scope for protolith: `.wsz` (ZIP/inflate) skin archives, audio,
 mpg123 control — those belong to the player.
