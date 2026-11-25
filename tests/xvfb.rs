@@ -404,8 +404,24 @@ fn pointer_input_arrives_with_window_and_root_coordinates() {
     xt.fake(&mut conn, 5, 5, 0, 0);
     let events = pump(&mut conn, Duration::from_millis(300));
     assert!(events.iter().any(|e| matches!(*e, Event::Motion { window, x: 10, y: 20, .. } if window == win)), "{events:?}");
-    let press = Event::Button { window: win, button: MouseButton::Left, pressed: true, x: 10, y: 20, root_x: 40, root_y: 60, modifiers: Default::default() };
-    assert!(events.contains(&press), "{events:?}");
+    let presses: Vec<u32> = events
+        .iter()
+        .filter_map(|e| match *e {
+            Event::Button { window, button: MouseButton::Left, pressed: true, x: 10, y: 20, root_x: 40, root_y: 60, modifiers, time }
+                if window == win && modifiers == Default::default() =>
+            {
+                Some(time)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(presses.len(), 1, "{events:?}");
+    assert!(presses[0] > 0, "a real server timestamp, not CurrentTime");
+    let release = events.iter().find_map(|e| match *e {
+        Event::Button { button: MouseButton::Left, pressed: false, time, .. } => Some(time),
+        _ => None,
+    });
+    assert!(release.unwrap().wrapping_sub(presses[0]) < 1000, "server timestamps, press then release: {presses:?} {release:?}");
     assert!(events.iter().any(|e| matches!(*e, Event::Button { button: MouseButton::Left, pressed: false, .. })));
     assert!(events.iter().any(|e| matches!(*e, Event::Scroll { dy: 1, x: 10, y: 20, .. })));
 }
@@ -846,4 +862,50 @@ fn text_field_takes_real_keys_and_clicks() {
     field.draw(&mut canvas, &Blocks, &FieldStyle::default());
     conn.present(win, &canvas.frame()).unwrap();
     assert_shows(&mut conn, win, Rect::new(0, 0, 100, 20), canvas.pixels());
+}
+
+/// Widgets on a real server: a slider drag that leaves the window (X's
+/// implicit grab keeps it coming), a button click, and a list double
+/// click timed by the server's own timestamps.
+#[cfg(feature = "ui")]
+#[test]
+fn widgets_take_real_pointer_input() {
+    use protolith::ui::{Button, List, Orientation, Response, Slider};
+
+    let Some(x) = xvfb(24, &[], None) else { return };
+    let mut conn = open(&x);
+    let win = conn.create_window(WindowOptions::new(100, 40).position(0, 0)).unwrap();
+    wait_for(&mut conn, |e| matches!(e, Event::Focused { focused: true, .. }));
+    let xt = Xtest::new(&mut conn);
+    let mut slider = Slider::new(Rect::new(0, 0, 100, 10), Orientation::Horizontal, 9);
+    let mut button = Button::new(Rect::new(0, 15, 30, 10));
+    let mut list = List::new(Rect::new(40, 15, 60, 25), 10);
+    list.items = vec!["one".into(), "two".into(), "three".into()];
+
+    let gesture = |conn: &mut Connection, path: &[(i32, i32)]| {
+        let (x0, y0) = path[0];
+        xt.move_to(conn, x0, y0);
+        xt.fake(conn, 4, 1, 0, 0);
+        for &(x, y) in &path[1..] {
+            xt.move_to(conn, x, y);
+        }
+        xt.fake(conn, 5, 1, 0, 0);
+    };
+    gesture(&mut conn, &[(5, 5), (60, 6), (400, 300)]); // drag the slider off the window's right
+    gesture(&mut conn, &[(10, 20)]); // click the button
+    gesture(&mut conn, &[(50, 20)]); // double-click "one"
+    gesture(&mut conn, &[(50, 20)]);
+
+    let mut got = Vec::new();
+    for e in pump(&mut conn, Duration::from_millis(400)).iter().filter(|e| e.window() == Some(win)) {
+        for (name, r) in [("slider", slider.handle(e)), ("button", button.handle(e)), ("list", list.handle(e))] {
+            if matches!(r, Response::Clicked | Response::Submit) {
+                got.push((name, r));
+            }
+        }
+    }
+    assert_eq!(got, [("slider", Response::Submit), ("button", Response::Clicked), ("list", Response::Submit)]);
+    assert_eq!(slider.value(), 9, "the drag followed the pointer past the window edge");
+    assert_eq!(list.selected(), Some(0));
+    assert!(list.is_focused() && !button.is_focused() && !slider.is_focused(), "focus followed the last click");
 }

@@ -55,5 +55,16 @@ Compared with the code it came from:
   scrolling that keeps the cursor visible, `FieldStyle` drawing. Word
   boundaries match Unicode exactly through Latin-1 and use a cheap rule
   past it, saving 2.8 KB of Unicode tables. Priced: +6.8 KB.
+- **More widgets** (feature `ui`): `Button` (fires on release over it,
+  backs out if dragged off; Space/Enter when focused), `Toggle`, `Slider`
+  (horizontal or vertical, grab-point or jump-to drag that follows the
+  pointer anywhere, wheel, arrow/page/Home/End keys; `Submit` at drag end
+  for seek bars), and `List` (click to select, double click or Enter to
+  submit, keyboard and wheel scrolling, `top`/`max_top` to pair with a
+  slider as scroll bar). Shared `Style` and `Response::Clicked`; focus
+  follows left clicks; every widget can be disabled. Priced: +6.6 KB for
+  all four, handled and drawn.
+- **`Event::Button` carries the server `time`**, so double clicks can be
+  detected.
 - **fbdev**: partial updates with positioned writes, 24 bpp, the current
   mode and live pan offset honored, never writes row padding.

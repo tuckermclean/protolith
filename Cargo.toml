@@ -61,6 +61,10 @@ name = "text"
 required-features = ["x11", "ui", "font-terminus-12", "font-terminus-16", "font-terminus-16-bold", "font-terminus-32-bold"]
 
 [[example]]
+name = "widgets"
+required-features = ["x11", "ui", "font-terminus-12"]
+
+[[example]]
 name = "fbdev"
 required-features = ["fbdev"]
 

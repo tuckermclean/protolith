@@ -186,6 +186,9 @@ pub enum Event {
         root_y: i32,
         /// Modifiers held.
         modifiers: Modifiers,
+        /// Server time in milliseconds (wraps every ~49 days) — compare two
+        /// presses with `wrapping_sub` to detect a double click.
+        time: u32,
     },
     /// The wheel turned (buttons 4–7). Positive `dy` is down / toward the
     /// user, positive `dx` is right; one notch is 1.
@@ -1091,7 +1094,17 @@ impl Connection {
                     9 => MouseButton::Forward,
                     n => MouseButton::Other(n),
                 };
-                self.events.push_back(Event::Button { window, button, pressed, x, y, root_x: i32::from(i.root_x), root_y: i32::from(i.root_y), modifiers });
+                self.events.push_back(Event::Button {
+                    window,
+                    button,
+                    pressed,
+                    x,
+                    y,
+                    root_x: i32::from(i.root_x),
+                    root_y: i32::from(i.root_y),
+                    modifiers,
+                    time: i.time,
+                });
             }
             RawEvent::MotionNotify(first) => {
                 let mut i = first;
@@ -1668,7 +1681,17 @@ mod tests {
         server.push_event(input(4, 1, win.xid(), 3, 4, 0, 1));
         assert_eq!(
             next(&mut conn),
-            Event::Button { window: win, button: MouseButton::Left, pressed: true, x: 3, y: 4, root_x: 103, root_y: 54, modifiers: Modifiers::default() }
+            Event::Button {
+                window: win,
+                button: MouseButton::Left,
+                pressed: true,
+                x: 3,
+                y: 4,
+                root_x: 103,
+                root_y: 54,
+                modifiers: Modifiers::default(),
+                time: 1
+            }
         );
         server.push_event(input(4, 5, win.xid(), 3, 4, 0, 2));
         server.push_event(input(5, 5, win.xid(), 3, 4, 0, 3));

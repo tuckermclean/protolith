@@ -93,10 +93,14 @@ copied skin assets).
    selection, words, limit) and `ui::TextField` (events → `Response`,
    mouse, scrolling, `FieldStyle`). Measured +6.8 KB. Stele's address bar
    can sit on `TextEdit` directly when rewired.
-4. Widgets — Button, Toggle, Slider, List as plain state structs: protolith
-   `Event` in, action out (press-inside/release-inside, drag capture,
-   focus); appearance separate (sprite sheets, or a default drawn bevel).
-   No layout engine, no widget tree, no callbacks.
+4. **Done:** `ui::{Button, Toggle, Slider, List}` — events in, `Response`
+   out, focus follows clicks, default bevel look or state for sprites.
+   Measured +6.6 KB for all four. `Event::Button` gained `time` for the
+   list's double click.
+
+The UI layer is complete. Natural next steps, to agree with the user
+first: a skinned example player face (original art), and the Stele
+rewire below.
 
 Out of scope for protolith: `.wsz` (ZIP/inflate) skin archives, audio,
 mpg123 control — those belong to the player.

@@ -178,12 +178,7 @@ impl TextField {
             canvas.fill_rect(r, bg);
         }
         if let Some((dark, light)) = style.bevel {
-            let last = |start: i32, len: u32| (i64::from(start) + i64::from(len) - 1).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-            let (right, bottom) = (last(r.x, r.width), last(r.y, r.height));
-            canvas.fill_rect(Rect::new(r.x, r.y, r.width, 1), dark);
-            canvas.fill_rect(Rect::new(r.x, r.y, 1, r.height), dark);
-            canvas.fill_rect(Rect::new(r.x, bottom, r.width, 1), light);
-            canvas.fill_rect(Rect::new(right, r.y, 1, r.height), light);
+            super::edge(canvas, r, dark, light);
         }
 
         let area = self.text_area();
@@ -401,7 +396,7 @@ mod tests {
             key(k, Modifiers { ctrl: true, ..Modifiers::default() })
         }
         fn button(pressed: bool, x: i32, y: i32, mods: Modifiers) -> Event {
-            Event::Button { window: W, button: MouseButton::Left, pressed, x, y, root_x: x, root_y: y, modifiers: mods }
+            Event::Button { window: W, button: MouseButton::Left, pressed, x, y, root_x: x, root_y: y, modifiers: mods, time: 0 }
         }
         fn drag(x: i32, left: bool) -> Event {
             Event::Motion {

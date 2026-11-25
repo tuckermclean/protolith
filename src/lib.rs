@@ -39,8 +39,8 @@
 //!   sprite sheets.
 //! - `font` — bitmap text on a canvas: sprite-sheet fonts, and a Terminus
 //!   Font subset (OFL-1.1) with one feature per size and weight.
-//! - `ui` — widgets as plain state structs: events in, a response out;
-//!   so far the text field.
+//! - `ui` — widgets as plain state structs, events in, a response out:
+//!   button, toggle, slider, list, text field.
 //!
 //! ## Features
 //!
