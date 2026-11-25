@@ -1,15 +1,19 @@
-//! A decoder for uncompressed Windows BMP files (feature `bmp`) — the
-//! format of classic skin sprite sheets.
+//! A decoder for Windows BMP files (feature `bmp`) — the format of classic
+//! skin sprite sheets.
 //!
 //! Reads the Windows (`BITMAPINFOHEADER` and its V4/V5 extensions) and
 //! OS/2 1.x (`BITMAPCOREHEADER`) layouts at 1, 4, 8 (palette), 16 (5-5-5),
-//! 24 and 32 bits per pixel, bottom-up or top-down. Not supported, and
-//! reported as [`BmpError::Unsupported`]: RLE and bit-field compression,
-//! embedded JPEG/PNG. Alpha in 32-bit files is ignored.
+//! 24 and 32 bits per pixel, bottom-up or top-down, and run-length
+//! compressed 8- and 4-bit images (`BI_RLE8`, `BI_RLE4` — most skins use
+//! RLE8). Not supported, and reported as [`BmpError::Unsupported`]:
+//! bit-field compression, embedded JPEG/PNG. Alpha in 32-bit files is
+//! ignored.
 //!
 //! The decoder is total over hostile input: any byte slice gives a
-//! [`Canvas`] or an error, never a panic, and it allocates nothing until
-//! the file is known to hold every pixel it claims.
+//! [`Canvas`] or an error, never a panic. An uncompressed image allocates
+//! nothing until the file is known to hold every pixel it claims; an RLE
+//! one, which can describe a large image in a few bytes, is limited to 16
+//! megapixels.
 //!
 //! ```
 //! # fn main() -> Result<(), protolith::canvas::bmp::BmpError> {
@@ -66,17 +70,21 @@ pub fn decode(bytes: &[u8]) -> Result<Canvas, BmpError> {
     }
     let data = le(bytes, 10, 4)? as usize;
     let header = le(bytes, 14, 4)? as usize;
-    let (width, height, bits, entry) = match header {
-        12 => (le(bytes, 18, 2)? as i32, le(bytes, 20, 2)? as i32, le(bytes, 24, 2)?, 3),
+    let (width, height, bits, entry, rle) = match header {
+        12 => (le(bytes, 18, 2)? as i32, le(bytes, 20, 2)? as i32, le(bytes, 24, 2)?, 3, false),
         40.. => {
-            match le(bytes, 30, 4)? {
-                0 => {}
-                1 | 2 => return Err(BmpError::Unsupported("RLE compression")),
+            let (width, height, bits) = (le(bytes, 18, 4)? as i32, le(bytes, 22, 4)? as i32, le(bytes, 28, 2)?);
+            let rle = match le(bytes, 30, 4)? {
+                0 => false,
+                1 if bits != 8 => return Err(BmpError::Invalid("RLE at this bit depth")),
+                2 if bits != 4 => return Err(BmpError::Invalid("RLE at this bit depth")),
+                1 | 2 if height < 0 => return Err(BmpError::Invalid("top-down RLE")),
+                1 | 2 => true,
                 3 | 6 => return Err(BmpError::Unsupported("bit-field compression")),
                 4 | 5 => return Err(BmpError::Unsupported("embedded JPEG or PNG")),
                 _ => return Err(BmpError::Invalid("unknown compression")),
-            }
-            (le(bytes, 18, 4)? as i32, le(bytes, 22, 4)? as i32, le(bytes, 28, 2)?, 4)
+            };
+            (width, height, bits, 4, rle)
         }
         _ => return Err(BmpError::Unsupported("header version")),
     };
@@ -109,6 +117,15 @@ pub fn decode(bytes: &[u8]) -> Result<Canvas, BmpError> {
 
     if w == 0 || h == 0 {
         return Ok(Canvas::new(w, h));
+    }
+    if rle {
+        // RLE can describe a huge image in a few bytes, so cap it up front.
+        if u64::from(w) * u64::from(h) > 1 << 24 {
+            return Err(BmpError::Unsupported("RLE image over 16 megapixels"));
+        }
+        let mut canvas = Canvas::new(w, h);
+        decode_rle(bytes.get(data..).ok_or(BmpError::Truncated)?, bits, &palette, &mut canvas);
+        return Ok(canvas);
     }
     // Rows are padded to 4 bytes; the last one need not be. Checked, in
     // u64, so a hostile header is rejected before anything is allocated.
@@ -149,6 +166,65 @@ pub fn decode(bytes: &[u8]) -> Result<Canvas, BmpError> {
         }
     }
     Ok(canvas)
+}
+
+/// Run-length decoding (`BI_RLE8`, `BI_RLE4`), bottom row first: pairs of
+/// `(count, index)` runs (for 4 bits, two alternating nibbles), and
+/// escapes `(0, 0)` end of line, `(0, 1)` end of bitmap, `(0, 2, dx, dy)`
+/// skip, `(0, n, ...)` `n` literal indices padded to an even byte count.
+/// Pixels never written stay black; runs past the right edge are clipped;
+/// the data running out ends the bitmap.
+fn decode_rle(data: &[u8], bits: u32, palette: &[u32], canvas: &mut Canvas) {
+    let (w, h) = (canvas.width() as usize, canvas.height() as usize);
+    let pixels = canvas.pixels_mut();
+    let (mut x, mut y, mut i) = (0usize, 0usize, 0usize);
+    while y < h && i + 1 < data.len() {
+        let (n, v) = (data[i], data[i + 1]);
+        i += 2;
+        // `count` pixels from the byte `v` (a run) or from `literal`'s bytes.
+        let (count, literal) = match (n, v) {
+            (0, 0) => {
+                (x, y) = (0, y + 1);
+                continue;
+            }
+            (0, 1) => break,
+            (0, 2) => {
+                let Some(d) = data.get(i..i + 2) else { break };
+                (x, y) = (x + usize::from(d[0]), y + usize::from(d[1]));
+                i += 2;
+                continue;
+            }
+            // A literal: `v` indices in the following bytes, padded to even.
+            (0, _) => {
+                let bytes = if bits == 8 { usize::from(v) } else { usize::from(v).div_ceil(2) };
+                let start = i.min(data.len());
+                i += bytes + bytes % 2;
+                (v, Some(&data[start..(start + bytes).min(data.len())]))
+            }
+            _ => (n, None),
+        };
+        for k in 0..usize::from(count) {
+            let byte = match literal {
+                None => v,
+                Some(src) => match src.get(if bits == 8 { k } else { k / 2 }) {
+                    Some(&b) => b,
+                    None => break,
+                },
+            };
+            // Four bits: the high nibble, then the low, in turn.
+            let index = if bits == 8 {
+                byte
+            } else if k % 2 == 0 {
+                byte >> 4
+            } else {
+                byte & 15
+            };
+            if x < w {
+                pixels[(h - 1 - y) * w + x] = palette.get(usize::from(index)).copied().unwrap_or(0);
+            }
+            x += 1;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -290,7 +366,6 @@ mod tests {
     fn rejects_what_it_cannot_read() {
         assert_eq!(decode(b"PK\x03\x04"), Err(BmpError::NotBmp));
         assert_eq!(decode(b"BM"), Err(BmpError::Truncated));
-        assert_eq!(decode(&bmp(40, 1, 1, 8, 1, 0, &[0], &[&[0, 0]])), Err(BmpError::Unsupported("RLE compression")));
         assert_eq!(decode(&bmp(40, 1, 1, 32, 3, 0, &[], &[&[0; 4]])), Err(BmpError::Unsupported("bit-field compression")));
         assert_eq!(decode(&bmp(40, 1, 1, 24, 4, 0, &[], &[&[0; 4]])), Err(BmpError::Unsupported("embedded JPEG or PNG")));
         assert_eq!(decode(&bmp(40, 1, 1, 2, 0, 0, &[0; 4], &[&[0; 4]])), Err(BmpError::Unsupported("bit depth")));
@@ -301,6 +376,65 @@ mod tests {
         let mut odd = bmp(40, 1, 1, 24, 0, 0, &[], &[&[0; 4]]);
         odd[14] = 20;
         assert_eq!(decode(&odd), Err(BmpError::Unsupported("header version")));
+    }
+
+    const GRAYS: [u32; 5] = [0x000000, 0x111111, 0x222222, 0x333333, 0x444444];
+
+    #[test]
+    fn rle8_runs_literals_and_escapes() {
+        // 4x3, encoded bottom row first.
+        #[rustfmt::skip]
+        let data: &[u8] = &[
+            3, 1, 1, 2, 0, 0,            // bottom: three 1s, one 2, end of line
+            0, 3, 4, 3, 2, 0, 0, 0,      // middle: literal 4 3 2 (padded to even), end of line
+            0, 2, 1, 0, 2, 3, 0, 1,      // top: skip right 1, two 3s, end of bitmap
+        ];
+        let file = bmp(40, 4, 3, 8, 1, 5, &GRAYS, &[data]);
+        let (a, b, c, d) = (0x111111, 0x222222, 0x333333, 0x444444);
+        #[rustfmt::skip]
+        assert_eq!(decode(&file).unwrap().pixels(), &[
+            0, c, c, 0,    // pixels never written stay black
+            d, c, b, 0,
+            a, a, a, b,
+        ]);
+    }
+
+    #[test]
+    fn rle_delta_skips_rows_and_runs_stop_at_the_edge() {
+        // 3x3: a run of 5 clipped at the row end, then down 2 rows (and right 1).
+        let data: &[u8] = &[5, 4, 0, 2, 1, 2, 1, 3];
+        let file = bmp(40, 3, 3, 8, 1, 5, &GRAYS, &[data]);
+        let (c, d) = (0x333333, 0x444444);
+        assert_eq!(decode(&file).unwrap().pixels(), &[0, 0, 0, 0, 0, 0, d, d, d], "the 3 after the skip lands at x = 6, off the image");
+        let data: &[u8] = &[2, 4, 0, 2, 0, 2, 1, 3];
+        let file = bmp(40, 3, 3, 8, 1, 5, &GRAYS, &[data]);
+        assert_eq!(decode(&file).unwrap().pixels(), &[0, 0, c, 0, 0, 0, d, d, 0]);
+    }
+
+    #[test]
+    fn rle4_alternates_nibbles() {
+        // 5x2: bottom row a run of 5 alternating 1 and 2; top row a literal
+        // 3 4 1 (2 bytes, already even; the fourth nibble is padding), a run
+        // of one 2, then the end.
+        let data: &[u8] = &[5, 0x12, 0, 0, 0, 3, 0x34, 0x10, 1, 0x20, 0, 1];
+        let file = bmp(40, 5, 2, 4, 2, 5, &GRAYS, &[data]);
+        let (a, b, c, d) = (0x111111, 0x222222, 0x333333, 0x444444);
+        assert_eq!(decode(&file).unwrap().pixels(), &[c, d, a, b, 0, a, b, a, b, a]);
+    }
+
+    #[test]
+    fn rle_tolerates_a_missing_end_and_rejects_nonsense() {
+        let file = bmp(40, 2, 1, 8, 1, 5, &GRAYS, &[&[2, 3]]);
+        assert_eq!(decode(&file).unwrap().pixels(), &[0x333333; 2], "no end-of-bitmap marker");
+        let file = bmp(40, 4, 1, 8, 1, 5, &GRAYS, &[&[0, 4, 1, 2]]);
+        assert_eq!(decode(&file).unwrap().pixels(), &[0x111111, 0x222222, 0, 0], "a literal cut short draws what is there");
+        assert_eq!(decode(&bmp(40, 2, -1, 8, 1, 5, &GRAYS, &[&[2, 3]])), Err(BmpError::Invalid("top-down RLE")));
+        assert_eq!(decode(&bmp(40, 2, 1, 24, 1, 0, &[], &[&[2, 3]])), Err(BmpError::Invalid("RLE at this bit depth")));
+        assert_eq!(decode(&bmp(40, 2, 1, 8, 2, 5, &GRAYS, &[&[2, 3]])), Err(BmpError::Invalid("RLE at this bit depth")));
+        assert_eq!(decode(&bmp(40, 5000, 5000, 8, 1, 5, &GRAYS, &[&[0, 1]])), Err(BmpError::Unsupported("RLE image over 16 megapixels")));
+        let mut far = bmp(40, 2, 1, 8, 1, 5, &GRAYS, &[&[2, 3]]);
+        far[10] = 0xff; // pixel data offset past the end
+        assert_eq!(decode(&far), Err(BmpError::Truncated));
     }
 
     #[test]
@@ -318,6 +452,8 @@ mod tests {
             bmp(40, 5, -3, 4, 0, 16, &pal, &[&[0x12; 4], &[0x34; 4], &[0x56; 4]]),
             bmp(124, 9, 2, 1, 0, 2, &[0, 0xffffff], &[&[0xaa; 4], &[0x55; 4]]),
             bmp(40, 2, 2, 16, 0, 0, &[], &[&[0xff; 4], &[0x0f; 4]]),
+            bmp(40, 6, 4, 8, 1, 5, &GRAYS, &[&[3, 1, 0, 3, 1, 2, 3, 0, 0, 2, 1, 1, 0, 0, 9, 4, 0, 1]]),
+            bmp(40, 7, 3, 4, 2, 5, &GRAYS, &[&[7, 0x12, 0, 0, 0, 5, 0x34, 0x12, 0x30, 0, 0, 2, 2, 0, 0, 1]]),
         ];
         let mut s = 0x2545_F491_4F6C_DD1Du64;
         for file in &files {

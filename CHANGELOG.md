@@ -32,9 +32,10 @@ Compared with the code it came from:
   `Frame` — copy, color key, alpha, nearest-neighbor scaled. The pixel
   operations follow Stele's `src/surface/mem.rs`, but on XRGB words and
   without its CSS-shaped `Surface`/`TextRun` API. A total BMP decoder
-  (1/4/8/16/24/32-bit uncompressed; RLE and bit fields are refused) reads
-  skin sprite sheets. Priced at the floppy profile: +2.7 KB with every
-  canvas operation in use, +5.1 KB more for the decoder, nothing when off.
+  (1/4/8/16/24/32-bit, and RLE8/RLE4 — 11 of the 18 bitmaps in the
+  classic base skin are RLE8; bit fields are refused) reads skin sprite
+  sheets. Priced at the floppy profile: +2.7 KB with every canvas
+  operation in use, +5.7 KB more for the decoder, nothing when off.
 - **Text** (new, feature `font`): a `Font` trait; `SheetFont`, glyphs cut
   from a skin sprite sheet by a layout string; and a 191-glyph subset of
   Terminus Font (OFL-1.1, from upstream 4.49.1 BDF via
