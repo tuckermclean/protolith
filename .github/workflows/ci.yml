@@ -40,6 +40,8 @@ jobs:
       - run: cargo build --no-default-features
       - run: cargo build --no-default-features --features x11
       - run: cargo build --no-default-features --features fbdev
+      - run: cargo build --no-default-features --features canvas
+      - run: cargo build --no-default-features --features bmp
 
   lint:
     runs-on: ubuntu-latest

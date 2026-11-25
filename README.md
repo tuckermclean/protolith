@@ -38,6 +38,7 @@ fn main() -> protolith::Result<()> {
 | **Draw** | Present `0x00RRGGBB` or RGBA frames, whole or by rectangle. Converted to any TrueColor visual of 8–32 bits in either byte order; split under the server's request limit. Each window keeps its last frame on the server, so exposure never needs your help. Server-side scrolling. Read-back. |
 | **Windows** | Several per connection. Title, class, icon, fixed size, no decorations, always-on-top, override-redirect, show/hide, move/resize. **Non-rectangular** windows via SHAPE, with a mask-to-rectangles helper. **Window dragging** for borderless windows: handed to the window manager when it can, done by protolith when there is none. |
 | **Input** | Keys (Shift, Caps/Shift Lock, Num Lock, autorepeat detection via XKB where available, media keys), buttons, wheel, coalesced motion with root coordinates, enter/leave, focus, close requests. A `Waker` to interrupt the event loop from another thread. |
+| **Canvas** *(feature `canvas`)* | Software drawing on an owned image: fills, clipping, alpha blending (exactly rounded), sprite blits — copied, color-keyed or alpha-blended — and nearest-neighbor scaling, all total over any coordinates. Feature `bmp` decodes uncompressed BMP sprite sheets (1/4/8/16/24/32-bit, both row orders, Windows and OS/2 headers). |
 | **Framebuffer** | `/dev/fbN` at 16/24/32 bpp with partial updates, for machines with no X at all. |
 | **Escape hatches** | `x11::Client` sends any request and collects any reply, with sequence numbers, errors and events demultiplexed for you. `x11::proto` is the protocol as pure functions. |
 
@@ -70,14 +71,16 @@ request that caused it, even after the wire counter wraps.
 ## Testing
 
 ```sh
-cargo test                       # everything; Xvfb tests skip if Xvfb is absent
-PROTOLITH_REQUIRE_XVFB=1 cargo test   # what CI runs: a missing Xvfb is a failure
+cargo test --all-features                            # everything; Xvfb tests skip if Xvfb is absent
+PROTOLITH_REQUIRE_XVFB=1 cargo test --all-features   # what CI runs: a missing Xvfb is a failure
 ```
 
 Four tiers:
 
-1. **Pure protocol** — every encoder byte-for-byte, every decoder against
-   truncation and random input.
+1. **Pure protocol and pixels** — every encoder byte-for-byte, every decoder
+   (including BMP) against truncation and random input; canvas blits against
+   a per-pixel reference over random rectangles and clips, blending
+   rounding checked exhaustively.
 2. **Fake server** — an in-process, scripted X server over a real socket pair
    drives `Client` and `Connection` deterministically: interleaved events and
    replies, errors routed by sequence number, 70 000-request wraparound,
@@ -101,6 +104,7 @@ Install `xvfb` and `x11-utils` to run all of it locally.
 ```sh
 cargo run --example hello     # paint with the mouse
 cargo run --example shaped    # a borderless, rounded, draggable little player face
+cargo run --example canvas --features bmp   # sprites, color key, blending, 2x scaling
 cargo run --example fbdev     # a test card on /dev/fb0 (from a text console)
 ```
 

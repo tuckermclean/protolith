@@ -173,6 +173,12 @@ impl<'a> Frame<'a> {
         self.pixels
     }
 
+    /// Row stride in pixels.
+    #[cfg(feature = "canvas")]
+    pub(crate) fn stride(&self) -> usize {
+        self.stride
+    }
+
     /// `(0, 0, width, height)`.
     pub fn bounds(&self) -> Rect {
         Rect::from_size(self.width, self.height)

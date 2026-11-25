@@ -27,5 +27,13 @@ Compared with the code it came from:
   protocol's rules, autorepeat detection (XKB detectable autorepeat, with a
   core-protocol fallback), media keys, buttons, wheel, coalesced motion, enter/leave,
   focus, close requests, a cross-thread `Waker`.
+- **Canvas** (new, features `canvas` and `bmp`): an owned `0x00RRGGBB`
+  image with clip, fill, exactly rounded alpha blending, and blits from any
+  `Frame` — copy, color key, alpha, nearest-neighbor scaled. The pixel
+  operations follow Stele's `src/surface/mem.rs`, but on XRGB words and
+  without its CSS-shaped `Surface`/`TextRun` API. A total BMP decoder
+  (1/4/8/16/24/32-bit uncompressed; RLE and bit fields are refused) reads
+  skin sprite sheets. Priced at the floppy profile: +2.7 KB with every
+  canvas operation in use, +5.1 KB more for the decoder, nothing when off.
 - **fbdev**: partial updates with positioned writes, 24 bpp, the current
   mode and live pan offset honored, never writes row padding.

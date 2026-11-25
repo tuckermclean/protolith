@@ -27,7 +27,7 @@ the code's doc comments and `README.md` say *what* it is.
 ```sh
 cargo fmt --check
 RUSTFLAGS="-D warnings" cargo clippy --all-targets --all-features
-for f in "" "--features x11" "--features fbdev"; do cargo build --no-default-features $f; done
+for f in "" "--features x11" "--features fbdev" "--features canvas" "--features bmp"; do cargo build --no-default-features $f; done
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 PROTOLITH_REQUIRE_XVFB=1 cargo test --all-features
 PROTOLITH_REQUIRE_XVFB=1 cargo +1.75 test --all-features
@@ -41,8 +41,10 @@ and screenshotting examples by hand).
 
 ## Test tiers
 
-1. Pure protocol (`src/x11/proto`) — exact bytes; decoders fuzzed for
-   panics/truncation.
+1. Pure protocol and pixels (`src/x11/proto`, `src/canvas`) — exact bytes;
+   decoders (X11, BMP) fuzzed for panics/truncation; canvas ops checked
+   against a naive per-pixel reference. BMP fixtures are built field by
+   field from the spec in the test, so their expected pixels are visible.
 2. Fake server (`src/x11/fake.rs`) — scripted, in-process, real socket. Keep
    it **strict**: it validates `PutImage` geometry like a real server; a
    lenient fake hid two bugs once. Extend its strictness when adding requests.
@@ -76,14 +78,17 @@ copied skin assets).
 
 **Next: a UI layer** (agreed 2026-11-25), as opt-in features in this crate:
 
-1. `canvas` — software drawing on owned XRGB images: fill, clip, alpha
-   blend, sprite/sub-rect blit (scaled nearest-neighbor), plus a small BMP
-   decoder (uncompressed 8/24-bit). Port the pixel ops from Stele's
-   `src/surface/mem.rs`, **not** its CSS-coupled `Surface`/`TextRun` API.
-2. Fonts — a generic glyph-sheet bitmap font (Winamp `text.bmp` style).
-   **Open question for the user:** bring Stele's Terminus font
-   (`src/text/terminus*.rs`, OFL-1.1, ~80 KB estimated, unmeasured) in now
-   as `font-terminus`, or defer to the Stele rewire?
+1. **Done:** `canvas` (fill, clip, blend, copy/key/alpha blits,
+   nearest-neighbor scaling) and `bmp` (uncompressed 1–32-bit). Pixel ops
+   follow Stele's `src/surface/mem.rs`, **not** its CSS-coupled
+   `Surface`/`TextRun` API. Measured: +2.7 KB all ops used, +5.1 KB the
+   decoder.
+2. Fonts — a generic glyph-sheet bitmap font (Winamp `text.bmp` style),
+   then Stele's Terminus (`src/text/terminus*.rs`, OFL-1.1). **Decided
+   (2026-11-25): bring Terminus in now, one cargo feature per pixel size**
+   (and weight), so the smallest useful slice is ~3 KB (16px regular)
+   rather than ~69 KB for all 5 sizes × 2 weights. Ship the OFL text and
+   attribution with it.
 3. Text field — the cursor/edit core from Stele's
    `src/backend/address_edit.rs`, generalized.
 4. Widgets — Button, Toggle, Slider, List as plain state structs: protolith

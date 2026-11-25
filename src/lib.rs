@@ -34,10 +34,15 @@
 //! - [`fbdev`] — the console framebuffer, for machines with no X at all.
 //! - [`Present`] — the one trait both implement, for code that should not
 //!   care which it is drawing to.
+//! - `canvas` — software drawing on an owned image: fills, blending,
+//!   sprite blits, nearest-neighbor scaling; `canvas::bmp` decodes BMP
+//!   sprite sheets.
 //!
 //! ## Features
 //!
-//! `x11` and `fbdev` (both on by default) select the backends.
+//! `x11` and `fbdev` (both on by default) select the backends. `canvas`
+//! adds software drawing, and `bmp` (which implies `canvas`) the BMP
+//! decoder. Each feature costs nothing when it is off.
 
 #![forbid(unsafe_code)]
 #![doc(html_root_url = "https://docs.rs/protolith/0.1.0")]
@@ -51,6 +56,8 @@ mod pixel;
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
 
+#[cfg(feature = "canvas")]
+pub mod canvas;
 #[cfg(feature = "fbdev")]
 pub mod fbdev;
 #[cfg(feature = "x11")]
