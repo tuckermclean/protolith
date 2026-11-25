@@ -1,0 +1,44 @@
+[package]
+name = "protolith"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Pixels in a window with nothing underneath: a dependency-free, unsafe-free X11 client and Linux framebuffer presenter, written against the wire protocol."
+repository = "https://github.com/tuckermclean/protolith"
+license = "MIT OR Apache-2.0"
+keywords = ["x11", "framebuffer", "window", "pixels", "fbdev"]
+categories = ["gui", "graphics", "rendering"]
+readme = "README.md"
+exclude = [".github/"]
+
+# No dependencies, by design: the whole X11 wire protocol is plain
+# byte-buffer encode/decode over `std::os::unix::net::UnixStream` /
+# `std::net::TcpStream`, and the framebuffer path is `std::fs::File`.
+[dependencies]
+
+[features]
+default = ["x11", "fbdev"]
+# The X11 client: windows, events, keyboard, SHAPE.
+x11 = []
+# The Linux console framebuffer (`/dev/fb*`) presenter.
+fbdev = []
+
+[[example]]
+name = "hello"
+required-features = ["x11"]
+
+[[example]]
+name = "shaped"
+required-features = ["x11"]
+
+[[example]]
+name = "fbdev"
+required-features = ["fbdev"]
+
+[[test]]
+name = "xvfb"
+required-features = ["x11"]
+
+[[test]]
+name = "fbdev"
+required-features = ["fbdev"]

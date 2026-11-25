@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [stable, "1.75"]
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install ${{ matrix.rust }} --profile minimal && rustup default ${{ matrix.rust }}
+      - name: Install Xvfb and an independent X client (xprop)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb x11-utils
+      - name: Test (unit, fake-server, Xvfb end-to-end, fbdev, doc)
+        env:
+          # A missing Xvfb fails the end-to-end tests instead of skipping them.
+          PROTOLITH_REQUIRE_XVFB: "1"
+        run: cargo test --all-features
+      - name: Stress the end-to-end suite (catches ordering races)
+        env:
+          PROTOLITH_REQUIRE_XVFB: "1"
+        run: for i in $(seq 1 10); do cargo test --test xvfb -q -- --test-threads=16 || exit 1; done
+
+  features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --no-default-features
+      - run: cargo build --no-default-features --features x11
+      - run: cargo build --no-default-features --features fbdev
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup component add rustfmt clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features
+      - run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
