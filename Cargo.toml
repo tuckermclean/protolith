@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 keywords = ["x11", "framebuffer", "window", "pixels", "fbdev"]
 categories = ["gui", "graphics", "rendering"]
 readme = "README.md"
-exclude = [".github/"]
+exclude = [".github/", "AGENTS.md", "CLAUDE.md"]
 
 # No dependencies, by design: the whole X11 wire protocol is plain
 # byte-buffer encode/decode over `std::os::unix::net::UnixStream` /
