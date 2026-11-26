@@ -173,6 +173,7 @@ fn predefined(name: &str) -> Option<u32> {
         "WM_NAME" => WM_NAME,
         "WM_ICON_NAME" => WM_ICON_NAME,
         "WM_CLASS" => WM_CLASS,
+        "WM_TRANSIENT_FOR" => WM_TRANSIENT_FOR,
         "WM_NORMAL_HINTS" => WM_NORMAL_HINTS,
         "STRING" => STRING,
         "ATOM" => ATOM,

@@ -483,6 +483,11 @@ fn set_size_and_position_apply() {
     conn.set_position(win, 123, 45).unwrap();
     pump(&mut conn, Duration::from_millis(50));
     assert_eq!(window_origin(&mut conn, win), (123, 45));
+    assert_eq!(conn.window_position(win).unwrap(), (123, 45), "agrees with a raw TranslateCoordinates");
+    // A window created at a position, with no window manager to move it.
+    let other = conn.create_window(WindowOptions::new(20, 20).position(31, 17).transient_for(win)).unwrap();
+    pump(&mut conn, Duration::from_millis(50));
+    assert_eq!(conn.window_position(other).unwrap(), (31, 17));
 }
 
 #[test]

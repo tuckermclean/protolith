@@ -82,6 +82,10 @@ Compared with the code it came from:
   every static binary that could talk TCP, and cost phonolite's i486
   build 24 KB with the std code around it, for host names X users rarely
   type.
+- **`Connection::window_position`** (where a window is on the screen) and
+  **`WindowOptions::transient_for`** (`WM_TRANSIENT_FOR`: a program's
+  secondary windows, kept off the taskbar and minimized with their owner),
+  for phonolite's detachable, snapping windows.
 - **`Connection::minimize`** (ICCCM `WM_CHANGE_STATE` to IconicState; a
   borderless window has no other way to be minimized; does nothing without
   a window manager, which is what would bring it back), and

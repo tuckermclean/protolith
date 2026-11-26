@@ -47,6 +47,7 @@ pub struct WindowOptions {
     always_on_top: bool,
     visible: bool,
     override_redirect: bool,
+    transient_for: Option<WindowId>,
 }
 
 impl WindowOptions {
@@ -64,6 +65,7 @@ impl WindowOptions {
             always_on_top: false,
             visible: true,
             override_redirect: false,
+            transient_for: None,
         }
     }
 
@@ -117,6 +119,14 @@ impl WindowOptions {
     /// window gets no decorations, placement, or focus from a WM.
     pub fn override_redirect(mut self, on: bool) -> Self {
         self.override_redirect = on;
+        self
+    }
+
+    /// Mark the window as belonging to `owner` (`WM_TRANSIENT_FOR`): a
+    /// program's secondary windows, which window managers keep off the
+    /// taskbar, above their owner, and minimized along with it.
+    pub fn transient_for(mut self, owner: WindowId) -> Self {
+        self.transient_for = Some(owner);
         self
     }
 }
@@ -622,6 +632,9 @@ impl Connection {
         c.send(&req::change_property(PropMode::Replace, wid, a.net_wm_pid, atom::CARDINAL, PropData::U32(&[std::process::id()])))?;
         c.send(&req::change_property(PropMode::Replace, wid, a.wm_client_machine, atom::STRING, PropData::U8(&latin1(&hostname()))))?;
         c.send(&size_hints(wid, opts.position, w, h, opts.resizable))?;
+        if let Some(owner) = opts.transient_for {
+            c.send(&req::change_property(PropMode::Replace, wid, atom::WM_TRANSIENT_FOR, atom::WINDOW, PropData::U32(&[owner.0])))?;
+        }
         if !opts.decorations {
             c.send(&req::change_property(PropMode::Replace, wid, a.motif_wm_hints, a.motif_wm_hints, PropData::U32(&motif_hints(false))))?;
         }
@@ -825,6 +838,15 @@ impl Connection {
         self.client.flush()
     }
 
+    /// Where the window's top-left corner is on the screen. Under a window
+    /// manager this is the window itself, not its frame.
+    pub fn window_position(&mut self, window: WindowId) -> Result<(i32, i32)> {
+        self.state(window)?;
+        let reply = self.client.round_trip(&req::translate_coordinates(window.0, self.root, 0, 0))?;
+        let (x, y) = req::parse_translate_coordinates(&reply).ok_or_else(|| Error::Protocol("short TranslateCoordinates reply".into()))?;
+        Ok((i32::from(x), i32::from(y)))
+    }
+
     /// Start moving the window with the pointer, typically on a button
     /// press over your own title bar (pass the press's root coordinates).
     ///
@@ -847,9 +869,8 @@ impl Connection {
             self.client.send(&req::send_event(false, self.root, event_mask::SUBSTRUCTURE_REDIRECT | event_mask::SUBSTRUCTURE_NOTIFY, &ev))?;
             return self.client.flush();
         }
-        let reply = self.client.round_trip(&req::translate_coordinates(window.0, self.root, 0, 0))?;
-        let (x, y) = req::parse_translate_coordinates(&reply).ok_or_else(|| Error::Protocol("short TranslateCoordinates reply".into()))?;
-        self.drag = Some(Drag { window: window.0, start_root: (root_x, root_y), start_pos: (i32::from(x), i32::from(y)) });
+        let start_pos = self.window_position(window)?;
+        self.drag = Some(Drag { window: window.0, start_root: (root_x, root_y), start_pos });
         Ok(())
     }
 
@@ -1888,6 +1909,21 @@ mod tests {
         conn.minimize(win).unwrap();
         conn.client().sync().unwrap();
         assert!(server.finish().with_opcode(opcode::SEND_EVENT).is_empty(), "no WM: nothing to ask");
+    }
+
+    #[test]
+    fn transient_owner_and_position() {
+        let (mut conn, server) = open(Script::default());
+        let main = conn.create_window(WindowOptions::new(5, 5)).unwrap();
+        let tool = conn.create_window(WindowOptions::new(5, 5).transient_for(main)).unwrap();
+        // The fake answers TranslateCoordinates with (x + 100, y + 50).
+        assert_eq!(conn.window_position(tool).unwrap(), (100, 50));
+        assert!(conn.window_position(WindowId::from_xid(0x4321)).is_err(), "not ours");
+        conn.client().sync().unwrap();
+        let p = server.property(tool.xid(), "WM_TRANSIENT_FOR").unwrap();
+        assert_eq!((p.0, p.1, p.2), (atom::WINDOW, 32, main.xid().to_le_bytes().to_vec()));
+        assert!(server.property(main.xid(), "WM_TRANSIENT_FOR").is_none());
+        server.finish();
     }
 
     #[test]

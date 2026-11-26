@@ -52,6 +52,8 @@ pub mod atom {
     pub const WM_SIZE_HINTS: Atom = 41;
     /// `WM_CLASS`
     pub const WM_CLASS: Atom = 67;
+    /// `WM_TRANSIENT_FOR`
+    pub const WM_TRANSIENT_FOR: Atom = 68;
 }
 
 /// Bytes needed to pad `n` up to a multiple of 4. Every variable-length
