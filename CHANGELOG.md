@@ -76,6 +76,12 @@ Compared with the code it came from:
   Priced: under 1 KB more than the default bevel drawing.
 - **`Event::Button` carries the server `time`**, so double clicks can be
   detected.
+- **TCP display hosts resolve without DNS**: an IP address (IPv6 in
+  brackets or bare), `localhost`, or a name in `/etc/hosts`. DNS lookup
+  moved behind the new `x11-dns` feature: libc's resolver came along with
+  every static binary that could talk TCP, and cost phonolite's i486
+  build 24 KB with the std code around it, for host names X users rarely
+  type.
 - **`Connection::minimize`** (ICCCM `WM_CHANGE_STATE` to IconicState; a
   borderless window has no other way to be minimized; does nothing without
   a window manager, which is what would bring it back), and

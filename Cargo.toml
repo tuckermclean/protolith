@@ -22,6 +22,10 @@ exclude = [".github/", "AGENTS.md", "CLAUDE.md"]
 default = ["x11", "fbdev"]
 # The X11 client: windows, events, keyboard, SHAPE.
 x11 = []
+# DNS for TCP displays named by host (DISPLAY=somehost:0). Without it, a
+# TCP display's host must be an IP address, localhost, or in /etc/hosts —
+# which spares a static binary libc's resolver (~14 KB).
+x11-dns = ["x11"]
 # The Linux console framebuffer (`/dev/fb*`) presenter.
 fbdev = []
 # Software drawing on owned XRGB images: fill, clip, blend, blit, scale.

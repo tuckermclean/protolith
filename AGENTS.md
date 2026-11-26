@@ -9,12 +9,18 @@ the code's doc comments and `README.md` say *what* it is.
    `#![forbid(unsafe_code)]` stays on. If something seems to need `unsafe`
    (mmap, ioctl, SCM_RIGHTS, MIT-SHM), find the std-only route or leave the
    feature out — that is how fbdev ended up on sysfs + `pwrite`.
-2. **Small, and priced.** protolith started as the X11/fbdev backends of
-   Stele (`~/gitrepos/stele-browser`), which must fit a 1.44 MB floppy and
-   will depend on this crate. New subsystems go behind cargo features so
-   Stele pays only for what it uses. Report the release-size delta of
-   anything substantial (build an example with `opt-level=z`, fat LTO,
-   `panic=abort`, stripped, and compare).
+2. **Small, and priced — for a Pentium, stretching to a 486DX2.** That is
+   the hardware protolith, Stele (`~/gitrepos/stele-browser`, which must
+   also fit a 1.44 MB floppy) and phonolite (`~/gitrepos/phonolite`) are
+   for; it is the reason this crate exists. New subsystems go behind cargo
+   features so programs pay only for what they use. Report the
+   release-size delta of anything substantial — and judge it on the real
+   target build, not x86_64: Stele's i486 musl target with std rebuilt
+   (`-Zbuild-std`, `-Cpanic=immediate-abort`, no unwind tables; see
+   phonolite's `tools/build-i486.sh`). What it showed, so far: libc's DNS
+   resolver (~14 KB, now behind `x11-dns`), std's float formatting and
+   parsing (~24 KB; avoid `{}` on floats and `str::parse::<f64>`), libm
+   (~17 KB), unwind tables and the unwinder (~75 KB, a build setting).
 3. **MSRV 1.75, stable Rust.** Test on both (`cargo +1.75 test`).
 4. **Test-first, root cause first.** A bug gets a failing test before the
    fix — against Xvfb when it is about real server behavior. Never weaken a
@@ -27,7 +33,7 @@ the code's doc comments and `README.md` say *what* it is.
 ```sh
 cargo fmt --check
 RUSTFLAGS="-D warnings" cargo clippy --all-targets --all-features
-for f in "" "--features x11" "--features fbdev" "--features canvas" "--features bmp" "--features font" "--features font-terminus-16" "--features ui"; do cargo build --no-default-features $f; done
+for f in "" "--features x11" "--features x11-dns" "--features fbdev" "--features canvas" "--features bmp" "--features font" "--features font-terminus-16" "--features ui"; do cargo build --no-default-features $f; done
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 PROTOLITH_REQUIRE_XVFB=1 cargo test --all-features
 PROTOLITH_REQUIRE_XVFB=1 cargo +1.75 test --all-features

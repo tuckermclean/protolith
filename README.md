@@ -34,7 +34,7 @@ fn main() -> protolith::Result<()> {
 
 | | |
 |---|---|
-| **Connect** | `$DISPLAY` over the local socket or TCP — including SSH X11 forwarding (`localhost:10`) — with `MIT-MAGIC-COOKIE-1` from `.Xauthority`, matched the way Xlib matches it. |
+| **Connect** | `$DISPLAY` over the local socket or TCP — including SSH X11 forwarding (`localhost:10`) — with `MIT-MAGIC-COOKIE-1` from `.Xauthority`, matched the way Xlib matches it. A TCP display's host is an IP address, `localhost` or a name in `/etc/hosts`; names that need DNS take the `x11-dns` feature (libc's resolver is ~14 KB of a static binary). |
 | **Draw** | Present `0x00RRGGBB` or RGBA frames, whole or by rectangle. Converted to any TrueColor visual of 8–32 bits in either byte order; split under the server's request limit. Each window keeps its last frame on the server, so exposure never needs your help. Server-side scrolling. Read-back. |
 | **Windows** | Several per connection. Title, class, icon, fixed size, no decorations, always-on-top, override-redirect, show/hide, minimize, move/resize. **Non-rectangular** windows via SHAPE, with a mask-to-rectangles helper. **Window dragging** for borderless windows: handed to the window manager when it can, done by protolith when there is none. |
 | **Input** | Keys (Shift, Caps/Shift Lock, Num Lock, autorepeat detection via XKB where available, media keys), buttons, wheel, coalesced motion with root coordinates, enter/leave, focus, close requests. A `Waker` to interrupt the event loop from another thread. |

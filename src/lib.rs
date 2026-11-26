@@ -44,7 +44,9 @@
 //!
 //! ## Features
 //!
-//! `x11` and `fbdev` (both on by default) select the backends. `canvas`
+//! `x11` and `fbdev` (both on by default) select the backends; `x11-dns`
+//! lets a TCP display's host be any DNS name (without it: IP addresses,
+//! `localhost` and `/etc/hosts`). `canvas`
 //! adds software drawing, and `bmp` (which implies `canvas`) the BMP
 //! decoder. `font` adds bitmap text, and `font-terminus-16` (likewise
 //! `-12`, `-20`, `-24`, `-32`, and `-16-bold` … `-32-bold`) one size of

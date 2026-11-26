@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{self, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
@@ -169,7 +169,7 @@ impl Client {
             Transport::Tcp(host) => {
                 let port =
                     u16::try_from(display.tcp_port()).map_err(|_| Error::InvalidArgument(format!("display number {} has no TCP port", display.display)))?;
-                let addrs: Vec<_> = (host.as_str(), port).to_socket_addrs()?.collect();
+                let addrs = resolve(host, port)?;
                 let mut last = io::Error::new(io::ErrorKind::NotFound, format!("{host}: no addresses"));
                 for addr in &addrs {
                     match TcpStream::connect_timeout(addr, Duration::from_secs(10)) {
@@ -637,6 +637,46 @@ impl AsRawFd for Client {
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
+/// The addresses of a TCP display's host: an IP literal, `localhost`, or
+/// a name in `/etc/hosts`. Real DNS needs the `x11-dns` feature: libc's
+/// resolver is ~14 KB of a static binary, and X over TCP is nearly always
+/// `localhost:N` (SSH forwarding) or a numeric address.
+fn resolve(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
+    let hosts = std::fs::read_to_string("/etc/hosts").unwrap_or_default();
+    let found = resolve_locally(host, &hosts);
+    if !found.is_empty() {
+        return Ok(found.into_iter().map(|ip| SocketAddr::new(ip, port)).collect());
+    }
+    #[cfg(feature = "x11-dns")]
+    {
+        use std::net::ToSocketAddrs;
+        Ok((host, port).to_socket_addrs()?.collect())
+    }
+    #[cfg(not(feature = "x11-dns"))]
+    Err(io::Error::new(io::ErrorKind::NotFound, format!("{host}: not an IP address, localhost or in /etc/hosts (DNS needs protolith's x11-dns feature)")))
+}
+
+/// [`resolve`] without DNS: `hosts` is the text of `/etc/hosts`.
+fn resolve_locally(host: &str, hosts: &str) -> Vec<IpAddr> {
+    let bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    if let Ok(ip) = bare.parse::<IpAddr>() {
+        return vec![ip];
+    }
+    let mut out = Vec::new();
+    for line in hosts.lines() {
+        let line = line.split('#').next().unwrap_or("");
+        let mut fields = line.split_whitespace();
+        let Some(ip) = fields.next().and_then(|a| a.parse::<IpAddr>().ok()) else { continue };
+        if fields.any(|name| name.eq_ignore_ascii_case(host)) && !out.contains(&ip) {
+            out.push(ip);
+        }
+    }
+    if out.is_empty() && host.eq_ignore_ascii_case("localhost") {
+        out = vec![IpAddr::V4(Ipv4Addr::LOCALHOST), IpAddr::V6(Ipv6Addr::LOCALHOST)];
+    }
+    out
+}
+
 fn connect_abstract(path: &std::path::Path) -> io::Result<UnixStream> {
     #[cfg(target_os = "android")]
     use std::os::android::net::SocketAddrExt;
@@ -661,6 +701,23 @@ fn read_exact(stream: &mut Stream, buf: &mut [u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hosts_resolve_without_dns() {
+        let hosts = "127.0.0.1 localhost\n::1 localhost ip6-localhost # comment\n10.0.0.7  Studio studio.lan\n# 10.0.0.8 gone\nnot-an-ip x\n";
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        assert_eq!(resolve_locally("192.168.1.2", ""), [ip("192.168.1.2")]);
+        assert_eq!(resolve_locally("[::1]", ""), [ip("::1")]);
+        assert_eq!(resolve_locally("::1", ""), [ip("::1")]);
+        assert_eq!(resolve_locally("localhost", hosts), [ip("127.0.0.1"), ip("::1")]);
+        assert_eq!(resolve_locally("LOCALHOST", ""), [ip("127.0.0.1"), ip("::1")], "even without a hosts file");
+        assert_eq!(resolve_locally("studio", hosts), [ip("10.0.0.7")], "names are case-insensitive");
+        assert_eq!(resolve_locally("studio.lan", hosts), [ip("10.0.0.7")]);
+        assert!(resolve_locally("gone", hosts).is_empty(), "commented out");
+        assert!(resolve_locally("x", hosts).is_empty());
+        assert!(resolve_locally("example.com", hosts).is_empty());
+    }
+
     use super::*;
     use crate::x11::fake::{FakeServer, Script};
     use crate::x11::proto::event::RawEvent;
