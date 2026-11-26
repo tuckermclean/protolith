@@ -49,6 +49,7 @@ pub struct WindowOptions {
     override_redirect: bool,
     transient_for: Option<WindowId>,
     frame: bool,
+    parent: Option<Xid>,
 }
 
 impl WindowOptions {
@@ -68,6 +69,7 @@ impl WindowOptions {
             override_redirect: false,
             transient_for: None,
             frame: false,
+            parent: None,
         }
     }
 
@@ -123,6 +125,16 @@ impl WindowOptions {
     /// window gets no decorations, placement, or focus from a WM.
     pub fn override_redirect(mut self, on: bool) -> Self {
         self.override_redirect = on;
+        self
+    }
+
+    /// Create the window inside `parent` (any window, this client's or
+    /// not), at [`position`](Self::position) relative to it: a part of a
+    /// larger window, such as a window manager's title bar inside its
+    /// frame. Such a window is no top-level, so it gets none of the window
+    /// manager properties (title, class, hints).
+    pub fn parent(mut self, parent: Xid) -> Self {
+        self.parent = Some(parent);
         self
     }
 
@@ -645,7 +657,7 @@ impl Connection {
         let c = &mut self.client;
         c.send(&req::create_window(&req::CreateWindow {
             wid,
-            parent: self.root,
+            parent: opts.parent.unwrap_or(self.root),
             depth: self.depth,
             x,
             y,
@@ -669,26 +681,8 @@ impl Connection {
         c.send(&req::poly_fill_rectangle(pixmap, gc, &[Rect::from_size(opts.width, opts.height)]))?;
 
         let a = self.atoms;
-        set_text(c, wid, atom::WM_NAME, a.net_wm_name, a.utf8_string, &opts.title)?;
-        set_text(c, wid, atom::WM_ICON_NAME, a.net_wm_icon_name, a.utf8_string, &opts.title)?;
-        let mut class = Vec::new();
-        for part in [&opts.class.0, &opts.class.1] {
-            class.extend(latin1(part));
-            class.push(0);
-        }
-        c.send(&req::change_property(PropMode::Replace, wid, atom::WM_CLASS, atom::STRING, PropData::U8(&class)))?;
-        c.send(&req::change_property(PropMode::Replace, wid, a.wm_protocols, atom::ATOM, PropData::U32(&[a.wm_delete_window])))?;
-        c.send(&req::change_property(PropMode::Replace, wid, a.net_wm_pid, atom::CARDINAL, PropData::U32(&[std::process::id()])))?;
-        c.send(&req::change_property(PropMode::Replace, wid, a.wm_client_machine, atom::STRING, PropData::U8(&latin1(&hostname()))))?;
-        c.send(&size_hints(wid, opts.position, w, h, opts.resizable))?;
-        if let Some(owner) = opts.transient_for {
-            c.send(&req::change_property(PropMode::Replace, wid, atom::WM_TRANSIENT_FOR, atom::WINDOW, PropData::U32(&[owner.0])))?;
-        }
-        if !opts.decorations {
-            c.send(&req::change_property(PropMode::Replace, wid, a.motif_wm_hints, a.motif_wm_hints, PropData::U32(&motif_hints(false))))?;
-        }
-        if opts.always_on_top {
-            c.send(&req::change_property(PropMode::Replace, wid, a.net_wm_state, atom::ATOM, PropData::U32(&[a.net_wm_state_above])))?;
+        if opts.parent.is_none() {
+            top_level_properties(c, a, wid, &opts, w, h)?;
         }
         if opts.visible {
             c.send(&req::map_window(wid))?;
@@ -1487,6 +1481,32 @@ fn motif_hints(decorations: bool) -> [u32; 5] {
     [2, 0, u32::from(decorations), 0, 0]
 }
 
+/// The ICCCM and EWMH properties of a top-level window.
+fn top_level_properties(c: &mut Client, a: Atoms, wid: Xid, opts: &WindowOptions, w: u16, h: u16) -> Result<()> {
+    set_text(c, wid, atom::WM_NAME, a.net_wm_name, a.utf8_string, &opts.title)?;
+    set_text(c, wid, atom::WM_ICON_NAME, a.net_wm_icon_name, a.utf8_string, &opts.title)?;
+    let mut class = Vec::new();
+    for part in [&opts.class.0, &opts.class.1] {
+        class.extend(latin1(part));
+        class.push(0);
+    }
+    c.send(&req::change_property(PropMode::Replace, wid, atom::WM_CLASS, atom::STRING, PropData::U8(&class)))?;
+    c.send(&req::change_property(PropMode::Replace, wid, a.wm_protocols, atom::ATOM, PropData::U32(&[a.wm_delete_window])))?;
+    c.send(&req::change_property(PropMode::Replace, wid, a.net_wm_pid, atom::CARDINAL, PropData::U32(&[std::process::id()])))?;
+    c.send(&req::change_property(PropMode::Replace, wid, a.wm_client_machine, atom::STRING, PropData::U8(&latin1(&hostname()))))?;
+    c.send(&size_hints(wid, opts.position, w, h, opts.resizable))?;
+    if let Some(owner) = opts.transient_for {
+        c.send(&req::change_property(PropMode::Replace, wid, atom::WM_TRANSIENT_FOR, atom::WINDOW, PropData::U32(&[owner.0])))?;
+    }
+    if !opts.decorations {
+        c.send(&req::change_property(PropMode::Replace, wid, a.motif_wm_hints, a.motif_wm_hints, PropData::U32(&motif_hints(false))))?;
+    }
+    if opts.always_on_top {
+        c.send(&req::change_property(PropMode::Replace, wid, a.net_wm_state, atom::ATOM, PropData::U32(&[a.net_wm_state_above])))?;
+    }
+    Ok(())
+}
+
 /// `WM_NORMAL_HINTS` (ICCCM §4.1.2.3). Always with static gravity: a
 /// position (here, or later in `set_position`) is then where the window
 /// itself goes, not its window manager frame — the same corner that
@@ -1978,6 +1998,23 @@ mod tests {
         conn.minimize(win).unwrap();
         conn.client().sync().unwrap();
         assert!(server.finish().with_opcode(opcode::SEND_EVENT).is_empty(), "no WM: nothing to ask");
+    }
+
+    #[test]
+    fn a_child_window_has_its_parent_and_no_top_level_properties() {
+        let (mut conn, server) = open(Script::default());
+        let top = conn.create_window(WindowOptions::new(50, 50)).unwrap();
+        let bar = conn.create_window(WindowOptions::new(50, 10).parent(top.xid()).position(0, 3)).unwrap();
+        conn.client().sync().unwrap();
+        assert!(server.property(top.xid(), "WM_NAME").is_some());
+        for p in ["WM_NAME", "WM_CLASS", "WM_NORMAL_HINTS", "WM_PROTOCOLS"] {
+            assert!(server.property(bar.xid(), p).is_none(), "{p} on a child window");
+        }
+        let log = server.finish();
+        let cw = log.with_opcode(opcode::CREATE_WINDOW);
+        assert_eq!(u32_at(cw[0], 8), ROOT);
+        assert_eq!(u32_at(cw[1], 8), top.xid(), "created inside its parent");
+        assert_eq!(i16::from_le_bytes([cw[1][14], cw[1][15]]), 3);
     }
 
     #[test]

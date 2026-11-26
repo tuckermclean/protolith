@@ -89,7 +89,9 @@ Compared with the code it came from:
   ConfigureRequest}` and `RawEvent::window`; requests `ChangeSaveSet`,
   `ReparentWindow`, `QueryTree`, `GrabButton`/`UngrabButton`,
   `GrabKey`/`UngrabKey`, `AllowEvents`, `GrabServer`/`UngrabServer`,
-  `KillClient`, and the synthetic `ConfigureNotify`. Ordinary clients see
+  `KillClient`, and the synthetic `ConfigureNotify`. `WindowOptions::parent`
+  creates a window inside another (a title bar inside a frame: a small
+  backing pixmap, not one the size of the frame). Ordinary clients see
   no change. Tested on Xvfb: a second WM is refused; a map request is
   redirected, the window framed; its resize is redirected through the
   frame; the save-set returns it to the root, alive, when the WM leaves.
