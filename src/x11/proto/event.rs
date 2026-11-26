@@ -25,8 +25,10 @@ pub mod code {
     pub const DESTROY_NOTIFY: u8 = 17;
     pub const UNMAP_NOTIFY: u8 = 18;
     pub const MAP_NOTIFY: u8 = 19;
+    pub const MAP_REQUEST: u8 = 20;
     pub const REPARENT_NOTIFY: u8 = 21;
     pub const CONFIGURE_NOTIFY: u8 = 22;
+    pub const CONFIGURE_REQUEST: u8 = 23;
     pub const PROPERTY_NOTIFY: u8 = 28;
     pub const CLIENT_MESSAGE: u8 = 33;
     pub const MAPPING_NOTIFY: u8 = 34;
@@ -192,8 +194,72 @@ pub enum RawEvent {
         /// Number of changed keycodes.
         count: u8,
     },
+    /// `MapRequest` (to a window manager): a child of a window it
+    /// redirects wants to be shown.
+    MapRequest {
+        /// The redirecting parent.
+        parent: Xid,
+        /// The window to be shown.
+        window: Xid,
+    },
+    /// `ConfigureRequest` (to a window manager): a child of a window it
+    /// redirects asks to move, resize or restack. Only the fields named in
+    /// `value_mask` were asked for.
+    ConfigureRequest {
+        /// The redirecting parent.
+        parent: Xid,
+        /// The window.
+        window: Xid,
+        /// Sibling for restacking (with `stack_mode`), or 0.
+        sibling: Xid,
+        /// Asked-for position.
+        x: i16,
+        /// Asked-for position.
+        y: i16,
+        /// Asked-for width.
+        width: u16,
+        /// Asked-for height.
+        height: u16,
+        /// Asked-for border width.
+        border_width: u16,
+        /// 0 Above, 1 Below, 2 TopIf, 3 BottomIf, 4 Opposite.
+        stack_mode: u8,
+        /// Which fields: x 1, y 2, width 4, height 8, border 16, sibling
+        /// 32, stack mode 64.
+        value_mask: u16,
+    },
     /// Any event this crate does not decode, by code.
     Other(u8),
+}
+
+impl RawEvent {
+    /// The window the event is about: the one acted on, for events a
+    /// parent hears of through `SubstructureNotify` or redirection (not
+    /// the parent it was reported to). `None` for keyboard-wide events.
+    pub fn window(&self) -> Option<Xid> {
+        match *self {
+            RawEvent::KeyPress(i)
+            | RawEvent::KeyRelease(i)
+            | RawEvent::ButtonPress(i)
+            | RawEvent::ButtonRelease(i)
+            | RawEvent::MotionNotify(i)
+            | RawEvent::EnterNotify { input: i, .. }
+            | RawEvent::LeaveNotify { input: i, .. } => Some(i.event),
+            RawEvent::FocusIn { window, .. }
+            | RawEvent::FocusOut { window, .. }
+            | RawEvent::Expose { window, .. }
+            | RawEvent::DestroyNotify { window }
+            | RawEvent::UnmapNotify { window }
+            | RawEvent::MapNotify { window }
+            | RawEvent::ReparentNotify { window, .. }
+            | RawEvent::ConfigureNotify { window, .. }
+            | RawEvent::PropertyNotify { window, .. }
+            | RawEvent::ClientMessage { window, .. }
+            | RawEvent::MapRequest { window, .. }
+            | RawEvent::ConfigureRequest { window, .. } => Some(window),
+            RawEvent::MappingNotify { .. } | RawEvent::Other(_) => None,
+        }
+    }
 }
 
 /// A decoded event and whether it was synthesized with `SendEvent`.
@@ -266,6 +332,19 @@ pub fn parse_event(buf: &[u8]) -> Option<Event> {
             }
             RawEvent::ClientMessage { window: buf.u32_at(4)?, format: buf.u8_at(1)?, message_type: buf.u32_at(8)?, data }
         }
+        MAP_REQUEST => RawEvent::MapRequest { parent: buf.u32_at(4)?, window: buf.u32_at(8)? },
+        CONFIGURE_REQUEST => RawEvent::ConfigureRequest {
+            stack_mode: buf.u8_at(1)?,
+            parent: buf.u32_at(4)?,
+            window: buf.u32_at(8)?,
+            sibling: buf.u32_at(12)?,
+            x: buf.i16_at(16)?,
+            y: buf.i16_at(18)?,
+            width: buf.u16_at(20)?,
+            height: buf.u16_at(22)?,
+            border_width: buf.u16_at(24)?,
+            value_mask: buf.u16_at(26)?,
+        },
         MAPPING_NOTIFY => RawEvent::MappingNotify { request: buf.u8_at(4)?, first_keycode: buf.u8_at(5)?, count: buf.u8_at(6)? },
         other => RawEvent::Other(other),
     };
@@ -372,6 +451,38 @@ pub(crate) mod tests {
             RawEvent::PropertyNotify { window: 9, atom: 39, state: 1 }
         );
         assert_eq!(parse_event(&synth(34, 0, &[(4, &[1, 8, 248])])).unwrap().event, RawEvent::MappingNotify { request: 1, first_keycode: 8, count: 248 });
+    }
+
+    #[test]
+    fn window_manager_events() {
+        let e = parse_event(&synth(20, 0, &[(4, &1u32.to_le_bytes()), (8, &9u32.to_le_bytes())])).unwrap().event;
+        assert_eq!(e, RawEvent::MapRequest { parent: 1, window: 9 });
+        assert_eq!(e.window(), Some(9), "the window, not the parent it was reported to");
+        let fields: &[(usize, &[u8])] = &[
+            (1, &[1]),
+            (4, &1u32.to_le_bytes()),
+            (8, &9u32.to_le_bytes()),
+            (12, &7u32.to_le_bytes()),
+            (16, &(-3i16).to_le_bytes()),
+            (18, &5i16.to_le_bytes()),
+            (20, &[128, 2, 224, 1, 2, 0, 0x4c, 0]),
+        ];
+        let e = parse_event(&synth(23, 0, fields)).unwrap().event;
+        let want = RawEvent::ConfigureRequest {
+            parent: 1,
+            window: 9,
+            sibling: 7,
+            x: -3,
+            y: 5,
+            width: 640,
+            height: 480,
+            border_width: 2,
+            stack_mode: 1,
+            value_mask: 0x4c,
+        };
+        assert_eq!(e, want);
+        let synthetic = super::super::request::configure_notify(9, 9, 10, -20, 300, 200);
+        assert_eq!(parse_event(&synthetic).unwrap().event, RawEvent::ConfigureNotify { window: 9, x: 10, y: -20, width: 300, height: 200 });
     }
 
     #[test]

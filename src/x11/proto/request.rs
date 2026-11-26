@@ -11,16 +11,26 @@ pub mod opcode {
     pub const CHANGE_WINDOW_ATTRIBUTES: u8 = 2;
     pub const GET_WINDOW_ATTRIBUTES: u8 = 3;
     pub const DESTROY_WINDOW: u8 = 4;
+    pub const CHANGE_SAVE_SET: u8 = 6;
+    pub const REPARENT_WINDOW: u8 = 7;
     pub const MAP_WINDOW: u8 = 8;
     pub const UNMAP_WINDOW: u8 = 10;
     pub const CONFIGURE_WINDOW: u8 = 12;
     pub const GET_GEOMETRY: u8 = 14;
+    pub const QUERY_TREE: u8 = 15;
     pub const INTERN_ATOM: u8 = 16;
     pub const CHANGE_PROPERTY: u8 = 18;
     pub const DELETE_PROPERTY: u8 = 19;
     pub const GET_PROPERTY: u8 = 20;
     pub const SEND_EVENT: u8 = 25;
     pub const UNGRAB_POINTER: u8 = 27;
+    pub const GRAB_BUTTON: u8 = 28;
+    pub const UNGRAB_BUTTON: u8 = 29;
+    pub const GRAB_KEY: u8 = 33;
+    pub const UNGRAB_KEY: u8 = 34;
+    pub const ALLOW_EVENTS: u8 = 35;
+    pub const GRAB_SERVER: u8 = 36;
+    pub const UNGRAB_SERVER: u8 = 37;
     pub const TRANSLATE_COORDINATES: u8 = 40;
     pub const SET_INPUT_FOCUS: u8 = 42;
     pub const GET_INPUT_FOCUS: u8 = 43;
@@ -37,6 +47,7 @@ pub mod opcode {
     pub const QUERY_EXTENSION: u8 = 98;
     pub const GET_KEYBOARD_MAPPING: u8 = 101;
     pub const BELL: u8 = 104;
+    pub const KILL_CLIENT: u8 = 113;
     pub const GET_MODIFIER_MAPPING: u8 = 119;
     pub const NO_OPERATION: u8 = 127;
 }
@@ -477,6 +488,129 @@ pub fn parse_property(reply: &[u8]) -> Option<Property> {
 /// mask, to the client that created the window).
 pub fn send_event(propagate: bool, destination: Xid, event_mask: u32, event: &[u8; EVENT_LEN]) -> Vec<u8> {
     Req::new(opcode::SEND_EVENT, u8::from(propagate)).u32(destination).u32(event_mask).bytes(event).finish()
+}
+
+/// Build the synthetic `ConfigureNotify` a window manager sends a client
+/// after moving it without resizing it (ICCCM §4.1.5), or after refusing
+/// its request: where the window really is, in root coordinates.
+pub fn configure_notify(event: Xid, window: Xid, x: i16, y: i16, width: u16, height: u16) -> [u8; EVENT_LEN] {
+    let mut e = [0u8; EVENT_LEN];
+    e[0] = super::event::code::CONFIGURE_NOTIFY;
+    e[4..8].copy_from_slice(&event.to_le_bytes());
+    e[8..12].copy_from_slice(&window.to_le_bytes());
+    e[16..18].copy_from_slice(&x.to_le_bytes());
+    e[18..20].copy_from_slice(&y.to_le_bytes());
+    e[20..22].copy_from_slice(&width.to_le_bytes());
+    e[22..24].copy_from_slice(&height.to_le_bytes());
+    e
+}
+
+// ------------------------------------------------ window management
+
+/// `AnyModifier` for [`grab_key`] and [`grab_button`].
+pub const ANY_MODIFIER: u16 = 0x8000;
+
+/// Encode `ChangeSaveSet` (opcode 6): `insert` (else delete) `window` in
+/// this client's save-set — windows the server reparents back to the root
+/// and maps if this client goes away, so a window manager's death does
+/// not take the programs it framed with it.
+pub fn change_save_set(insert: bool, window: Xid) -> Vec<u8> {
+    Req::new(opcode::CHANGE_SAVE_SET, u8::from(!insert)).u32(window).finish()
+}
+
+/// Encode `ReparentWindow` (opcode 7): make `window` a child of `parent`
+/// at `(x, y)` in it.
+pub fn reparent_window(window: Xid, parent: Xid, x: i16, y: i16) -> Vec<u8> {
+    Req::new(opcode::REPARENT_WINDOW, 0).u32(window).u32(parent).i16(x).i16(y).finish()
+}
+
+/// Encode `QueryTree` (opcode 15).
+pub fn query_tree(window: Xid) -> Vec<u8> {
+    Req::new(opcode::QUERY_TREE, 0).u32(window).finish()
+}
+
+/// A `QueryTree` reply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tree {
+    /// The root.
+    pub root: Xid,
+    /// The parent (0 for the root itself).
+    pub parent: Xid,
+    /// The children, bottom of the stack first.
+    pub children: Vec<Xid>,
+}
+
+/// Decode a `QueryTree` reply.
+pub fn parse_query_tree(reply: &[u8]) -> Option<Tree> {
+    let n = usize::from(reply.u16_at(16)?);
+    let children = (0..n).map(|i| reply.u32_at(32 + 4 * i)).collect::<Option<Vec<_>>>()?;
+    Some(Tree { root: reply.u32_at(8)?, parent: reply.u32_at(12)?, children })
+}
+
+/// Encode `GrabButton` (opcode 28): a passive grab of `button` (0 any)
+/// with `modifiers` on `window`. `sync_pointer` freezes the pointer at the
+/// press until [`allow_events`] (click-to-focus that passes the click on).
+pub fn grab_button(owner_events: bool, window: Xid, event_mask: u16, sync_pointer: bool, button: u8, modifiers: u16) -> Vec<u8> {
+    Req::new(opcode::GRAB_BUTTON, u8::from(owner_events))
+        .u32(window)
+        .u16(event_mask)
+        .u8(u8::from(!sync_pointer)) // pointer mode: 0 Synchronous, 1 Asynchronous
+        .u8(1) // keyboard mode: Asynchronous
+        .u32(0) // confine-to: None
+        .u32(0) // cursor: None
+        .u8(button)
+        .skip(1)
+        .u16(modifiers)
+        .finish()
+}
+
+/// Encode `UngrabButton` (opcode 29).
+pub fn ungrab_button(button: u8, window: Xid, modifiers: u16) -> Vec<u8> {
+    Req::new(opcode::UNGRAB_BUTTON, button).u32(window).u16(modifiers).skip(2).finish()
+}
+
+/// Encode `GrabKey` (opcode 33): a passive grab of `keycode` (0 any) with
+/// `modifiers` on `window`, both pointer and keyboard asynchronous — a
+/// window manager's global shortcut.
+pub fn grab_key(owner_events: bool, window: Xid, modifiers: u16, keycode: u8) -> Vec<u8> {
+    Req::new(opcode::GRAB_KEY, u8::from(owner_events)).u32(window).u16(modifiers).u8(keycode).u8(1).u8(1).skip(3).finish()
+}
+
+/// Encode `UngrabKey` (opcode 34).
+pub fn ungrab_key(keycode: u8, window: Xid, modifiers: u16) -> Vec<u8> {
+    Req::new(opcode::UNGRAB_KEY, keycode).u32(window).u16(modifiers).skip(2).finish()
+}
+
+/// `AllowEvents` modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Allow {
+    /// Thaw the pointer, the grab staying.
+    AsyncPointer = 0,
+    /// Release a frozen passive grab and deliver the press as if it had
+    /// never been grabbed.
+    ReplayPointer = 2,
+}
+
+/// Encode `AllowEvents` (opcode 35).
+pub fn allow_events(mode: Allow, time: u32) -> Vec<u8> {
+    Req::new(opcode::ALLOW_EVENTS, mode as u8).u32(time).finish()
+}
+
+/// Encode `GrabServer` (opcode 36): no other client's requests run until
+/// [`ungrab_server`].
+pub fn grab_server() -> Vec<u8> {
+    Req::new(opcode::GRAB_SERVER, 0).finish()
+}
+
+/// Encode `UngrabServer` (opcode 37).
+pub fn ungrab_server() -> Vec<u8> {
+    Req::new(opcode::UNGRAB_SERVER, 0).finish()
+}
+
+/// Encode `KillClient` (opcode 113): close the connection of the client
+/// that created `resource`.
+pub fn kill_client(resource: Xid) -> Vec<u8> {
+    Req::new(opcode::KILL_CLIENT, 0).u32(resource).finish()
 }
 
 /// Build a 32-byte `ClientMessage` event (format 32) for [`send_event`].
@@ -971,6 +1105,49 @@ mod tests {
         check_len(&r);
         assert_eq!(&r[12..16], &0x0001_0000u32.to_le_bytes());
         assert_eq!(&r[16..20], &0u32.to_le_bytes());
+    }
+
+    #[test]
+    fn window_manager_request_bytes() {
+        // Layouts from the X11 protocol specification, "Encoding: Requests".
+        let le = |v: u32| v.to_le_bytes();
+        let r = change_save_set(true, 9);
+        check_len(&r);
+        assert_eq!(r, [6, 0, 2, 0, 9, 0, 0, 0]);
+        assert_eq!(change_save_set(false, 9)[1], 1, "Delete");
+        let r = reparent_window(9, 5, 2, -18);
+        check_len(&r);
+        assert_eq!(r[..4], [7, 0, 4, 0]);
+        assert_eq!((&r[4..8], &r[8..12]), (&le(9)[..], &le(5)[..]));
+        assert_eq!(&r[12..16], &[2, 0, 0xee, 0xff]);
+        let r = query_tree(9);
+        assert_eq!(r, [15, 0, 2, 0, 9, 0, 0, 0]);
+        let r = grab_button(false, 9, 4, true, 1, ANY_MODIFIER);
+        check_len(&r);
+        assert_eq!(r.len(), 24);
+        assert_eq!(r[..4], [28, 0, 6, 0]);
+        assert_eq!(&r[8..12], &[4, 0, 0, 1], "event mask, pointer Synchronous, keyboard Asynchronous");
+        assert_eq!((r[20], &r[22..24]), (1, &[0x00, 0x80][..]));
+        assert_eq!(grab_button(true, 9, 4, false, 3, 0)[1..11].to_vec(), [1, 6, 0, 9, 0, 0, 0, 4, 0, 1]);
+        assert_eq!(ungrab_button(1, 9, ANY_MODIFIER), [29, 1, 3, 0, 9, 0, 0, 0, 0x00, 0x80, 0, 0]);
+        let r = grab_key(true, 9, 0x40, 38);
+        check_len(&r);
+        assert_eq!(r, [33, 1, 4, 0, 9, 0, 0, 0, 0x40, 0, 38, 1, 1, 0, 0, 0]);
+        assert_eq!(ungrab_key(0, 9, ANY_MODIFIER), [34, 0, 3, 0, 9, 0, 0, 0, 0x00, 0x80, 0, 0]);
+        assert_eq!(allow_events(Allow::ReplayPointer, 7), [35, 2, 2, 0, 7, 0, 0, 0]);
+        assert_eq!(grab_server(), [36, 0, 1, 0]);
+        assert_eq!(ungrab_server(), [37, 0, 1, 0]);
+        assert_eq!(kill_client(9), [113, 0, 2, 0, 9, 0, 0, 0]);
+        // A QueryTree reply: root 1, parent 2, two children.
+        let mut reply = vec![1u8, 0, 0, 0, 2, 0, 0, 0];
+        reply.extend(le(1));
+        reply.extend(le(2));
+        reply.extend([2, 0]);
+        reply.resize(32, 0);
+        reply.extend(le(7));
+        reply.extend(le(8));
+        assert_eq!(parse_query_tree(&reply), Some(Tree { root: 1, parent: 2, children: vec![7, 8] }));
+        assert_eq!(parse_query_tree(&reply[..36]), None, "short");
     }
 
     #[test]

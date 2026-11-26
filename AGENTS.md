@@ -132,6 +132,12 @@ needed two small additions here (`Connection::minimize`,
 agree with the user, not a workaround there. Natural next step, to agree
 with the user first: the Stele rewire below.
 
+**lintel** (`~/gitrepos/lintel`), a small hybrid tiling/floating window
+manager, is next (agreed 2026-11-26): drag-to-edge tiling as Windows Snap
+and macOS do it, which anyone knows without being told. protolith gives it
+`become_window_manager`, frames and `Event::Foreign` plus the WM requests;
+the policy (layout, decorations, EWMH) lives in lintel, not here.
+
 Out of scope for protolith: `.wsz` (ZIP/inflate) skin archives, audio,
 mpg123 control — those belong to the player.
 

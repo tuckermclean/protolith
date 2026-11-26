@@ -82,6 +82,17 @@ Compared with the code it came from:
   every static binary that could talk TCP, and cost phonolite's i486
   build 24 KB with the std code around it, for host names X users rarely
   type.
+- **Window manager support**, for lintel: `Connection::become_window_manager`
+  and `Connection::root`; `WindowOptions::frame` (a frame redirects its
+  children's requests to its owner); `Event::Foreign` carries every event
+  about a window the connection did not create; `RawEvent::{MapRequest,
+  ConfigureRequest}` and `RawEvent::window`; requests `ChangeSaveSet`,
+  `ReparentWindow`, `QueryTree`, `GrabButton`/`UngrabButton`,
+  `GrabKey`/`UngrabKey`, `AllowEvents`, `GrabServer`/`UngrabServer`,
+  `KillClient`, and the synthetic `ConfigureNotify`. Ordinary clients see
+  no change. Tested on Xvfb: a second WM is refused; a map request is
+  redirected, the window framed; its resize is redirected through the
+  frame; the save-set returns it to the root, alive, when the WM leaves.
 - **Positions mean the window, not its frame**: every window's size
   hints carry static gravity, so `WindowOptions::position` and
   `Connection::set_position` place the window itself (as

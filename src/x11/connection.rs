@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use super::client::{Client, Message};
 use super::display::{hostname, Auth, DisplayName};
 use super::keyboard::{Key, Keymap, Modifiers};
-use super::proto::event::{state, InputEvent, RawEvent};
+use super::proto::event::{self as wire, state, InputEvent, RawEvent};
 use super::proto::request::{self as req, event_mask, shape as shape_req, PropData, PropMode, WindowAttributes, WindowClass};
 use super::proto::setup::{Format, Visual};
 use super::proto::{atom, Atom, Keysym, XError, Xid};
@@ -48,6 +48,7 @@ pub struct WindowOptions {
     visible: bool,
     override_redirect: bool,
     transient_for: Option<WindowId>,
+    frame: bool,
 }
 
 impl WindowOptions {
@@ -66,6 +67,7 @@ impl WindowOptions {
             visible: true,
             override_redirect: false,
             transient_for: None,
+            frame: false,
         }
     }
 
@@ -121,6 +123,15 @@ impl WindowOptions {
     /// window gets no decorations, placement, or focus from a WM.
     pub fn override_redirect(mut self, on: bool) -> Self {
         self.override_redirect = on;
+        self
+    }
+
+    /// A window manager's frame: requests by windows reparented into it
+    /// (to map, move or resize themselves) are redirected to this
+    /// connection, and their unmapping and destruction reported to it, as
+    /// [`Event::Foreign`] (after [`Connection::become_window_manager`]).
+    pub fn frame(mut self, on: bool) -> Self {
+        self.frame = on;
         self
     }
 
@@ -290,6 +301,12 @@ pub enum Event {
     /// The server rejected a request that had no reply. Usually a bug in
     /// the caller (a bad window id) or the server running out of memory.
     Error(XError),
+    /// An event about a window this connection did not create, as the
+    /// wire carried it: what a window manager hears of other programs'
+    /// windows (map and configure requests, unmapping, destruction,
+    /// property changes, client messages, grabbed keys and buttons). Only
+    /// after [`Connection::become_window_manager`].
+    Foreign(wire::Event),
 }
 
 impl Event {
@@ -306,7 +323,7 @@ impl Event {
             | Event::Resized { window, .. }
             | Event::CloseRequested { window }
             | Event::Destroyed { window } => Some(window),
-            Event::Wake | Event::Error(_) => None,
+            Event::Wake | Event::Error(_) | Event::Foreign(_) => None,
         }
     }
 }
@@ -449,6 +466,8 @@ pub struct Connection {
     scratch: Vec<u8>,
     drag: Option<Drag>,
     wake_window: Option<Xid>,
+    /// Pass events about other clients' windows on ([`Event::Foreign`]).
+    foreign: bool,
     /// Windows we destroyed whose DestroyNotify has not arrived yet.
     dying: std::collections::HashSet<Xid>,
     /// XKB detectable autorepeat is on: repeats are bare presses.
@@ -527,6 +546,7 @@ impl Connection {
             scratch: Vec::new(),
             drag: None,
             wake_window: None,
+            foreign: false,
             dying: Default::default(),
             detectable_repeat,
             held: Default::default(),
@@ -559,9 +579,31 @@ impl Connection {
         (u32::from(s.width), u32::from(s.height))
     }
 
-    /// Was a window manager running when the connection opened?
+    /// Was a window manager running when the connection opened (or is
+    /// this connection one)?
     pub fn has_window_manager(&self) -> bool {
         self.has_wm
+    }
+
+    /// The root window of the screen.
+    pub fn root(&self) -> Xid {
+        self.root
+    }
+
+    /// Become the window manager: redirect the root's children's map and
+    /// configure requests to this connection, and hear of their
+    /// unmapping, destruction and property changes — every such event
+    /// about a window this connection did not create comes as
+    /// [`Event::Foreign`]. Only one client may hold the redirection: with
+    /// another window manager running this fails with the server's
+    /// `Access` error ([`Error::X`], code 10).
+    pub fn become_window_manager(&mut self) -> Result<()> {
+        let mask = event_mask::SUBSTRUCTURE_REDIRECT | event_mask::SUBSTRUCTURE_NOTIFY | event_mask::STRUCTURE_NOTIFY | event_mask::PROPERTY_CHANGE;
+        let first = self.client.send(&req::change_window_attributes(self.root, &WindowAttributes { event_mask: Some(mask), ..Default::default() }))?;
+        self.client.check_since(first)?;
+        self.has_wm = true; // our own windows must not grab the focus on mapping
+        self.foreign = true;
+        Ok(())
     }
 
     /// Does the server support non-rectangular windows?
@@ -617,7 +659,7 @@ impl Connection {
                 border_pixel: Some(0),
                 bit_gravity: Some(1),
                 override_redirect: opts.override_redirect.then_some(true),
-                event_mask: Some(WINDOW_EVENTS),
+                event_mask: Some(if opts.frame { WINDOW_EVENTS | event_mask::SUBSTRUCTURE_REDIRECT | event_mask::SUBSTRUCTURE_NOTIFY } else { WINDOW_EVENTS }),
                 colormap: self.colormap,
                 ..Default::default()
             },
@@ -1078,6 +1120,14 @@ impl Connection {
             }
             Message::Event(e) => e,
         };
+        if self.foreign {
+            if let Some(w) = ev.event.window() {
+                if !self.windows.contains_key(&w) && !self.dying.contains(&w) && Some(w) != self.wake_window {
+                    self.events.push_back(Event::Foreign(ev));
+                    return Ok(());
+                }
+            }
+        }
         match ev.event {
             RawEvent::KeyPress(i) | RawEvent::KeyRelease(i) => {
                 let pressed = matches!(ev.event, RawEvent::KeyPress(_));

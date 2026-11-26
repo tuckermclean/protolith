@@ -914,3 +914,57 @@ fn widgets_take_real_pointer_input() {
     assert_eq!(list.selected(), Some(0));
     assert!(list.is_focused() && !button.is_focused() && !slider.is_focused(), "focus followed the last click");
 }
+
+/// The foreign event `pred` picks, waiting for it.
+fn wait_foreign(conn: &mut Connection, mut pred: impl FnMut(&RawEvent) -> bool) -> RawEvent {
+    match wait_for(conn, |e| matches!(e, Event::Foreign(f) if pred(&f.event))) {
+        Event::Foreign(f) => f.event,
+        _ => unreachable!(),
+    }
+}
+
+fn parent_of(x: &Xvfb, window: u32) -> u32 {
+    let mut c = raw_client(x);
+    let reply = c.round_trip(&req::query_tree(window)).unwrap();
+    req::parse_query_tree(&reply).unwrap().parent
+}
+
+#[test]
+fn a_window_manager_frames_a_window_and_the_save_set_rescues_it() {
+    let Some(x) = xvfb(24, &[], None) else { return };
+    let mut wm = open(&x);
+    wm.become_window_manager().unwrap();
+    assert!(wm.has_window_manager());
+    match open(&x).become_window_manager() {
+        Err(Error::X(e)) => assert_eq!(e.code, 10, "Access: one window manager at a time"),
+        other => panic!("a second window manager: {other:?}"),
+    }
+    let mut app = open(&x);
+    let w = app.create_window(WindowOptions::new(100, 50).title("app")).unwrap();
+    // The app's MapWindow went to the window manager instead.
+    wait_foreign(&mut wm, |e| matches!(*e, RawEvent::MapRequest { window, .. } if window == w.xid()));
+    let frame = wm.create_window(WindowOptions::new(104, 70).frame(true).visible(false).decorations(false).position(30, 40)).unwrap();
+    for r in [req::change_save_set(true, w.xid()), req::reparent_window(w.xid(), frame.xid(), 2, 18), req::map_window(w.xid())] {
+        wm.client().send(&r).unwrap();
+    }
+    wm.show(frame).unwrap();
+    wm.client().sync().unwrap();
+    assert_eq!(parent_of(&x, w.xid()), frame.xid());
+    assert_eq!(app.window_position(w).unwrap(), (32, 58), "inside the frame");
+    // Now the app's own resize goes to the frame's owner, as a request.
+    app.set_size(w, 120, 60).unwrap();
+    let e = wait_foreign(&mut wm, |e| matches!(*e, RawEvent::ConfigureRequest { window, .. } if window == w.xid()));
+    assert!(matches!(e, RawEvent::ConfigureRequest { width: 120, height: 60, parent, .. } if parent == frame.xid()), "{e:?}");
+    assert_eq!(app.window_size(w).unwrap(), (100, 50), "not applied: that is the window manager's call");
+    // The frame's own events still come as protolith's.
+    wm.set_size(frame, 124, 80).unwrap();
+    wait_for(&mut wm, |e| matches!(e, Event::Resized { window, width: 124, .. } if *window == frame));
+    // The window manager goes away: the window goes back to the root, alive.
+    drop(wm);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while parent_of(&x, w.xid()) != app.root() {
+        assert!(Instant::now() < deadline, "not reparented back to the root");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!pump(&mut app, Duration::from_millis(100)).iter().any(|e| matches!(e, Event::Destroyed { .. })), "the app's window lives");
+}
