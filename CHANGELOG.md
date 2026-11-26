@@ -82,6 +82,13 @@ Compared with the code it came from:
   every static binary that could talk TCP, and cost phonolite's i486
   build 24 KB with the std code around it, for host names X users rarely
   type.
+- **Positions mean the window, not its frame**: every window's size
+  hints carry static gravity, so `WindowOptions::position` and
+  `Connection::set_position` place the window itself (as
+  `window_position` reports it) under window managers that add frames.
+  `set_size` on a fixed-size window no longer drops the position from the
+  hints (twm took such a window as unplaced and waited, server grabbed,
+  for the user to place it).
 - **`Connection::window_position`** (where a window is on the screen) and
   **`WindowOptions::transient_for`** (`WM_TRANSIENT_FOR`: a program's
   secondary windows, kept off the taskbar and minimized with their owner),

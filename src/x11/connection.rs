@@ -81,7 +81,9 @@ impl WindowOptions {
         self
     }
 
-    /// Initial position (otherwise the window manager places it).
+    /// Initial position (otherwise the window manager places it): where
+    /// the window itself goes, its frame (if the window manager adds one)
+    /// around it.
     pub fn position(mut self, x: i32, y: i32) -> Self {
         self.position = Some((x, y));
         self
@@ -396,6 +398,11 @@ struct WindowState {
     focus_requested: bool,
     resizable: bool,
     always_on_top: bool,
+    /// The position last asked for: rewriting the size hints must keep
+    /// it, or a window manager reading them afterwards takes the window as
+    /// unplaced (twm then waits for the user to place it by hand, holding
+    /// a server grab).
+    position: Option<(i32, i32)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -669,6 +676,7 @@ impl Connection {
                 focus_requested: false,
                 resizable: opts.resizable,
                 always_on_top: opts.always_on_top,
+                position: opts.position,
             },
         );
         Ok(WindowId(wid))
@@ -718,9 +726,11 @@ impl Connection {
         self.client.flush()
     }
 
-    /// Move the window (top-left corner, screen coordinates).
+    /// Move the window (top-left corner, screen coordinates): the window
+    /// itself, as [`Connection::window_position`] reports it, whatever
+    /// frame the window manager puts around it.
     pub fn set_position(&mut self, window: WindowId, x: i32, y: i32) -> Result<()> {
-        self.state(window)?;
+        self.state_mut(window)?.position = Some((x, y));
         self.client.send(&req::configure_window(window.0, &req::ConfigureWindow { x: Some(coord(x)), y: Some(coord(y)), ..Default::default() }))?;
         self.client.flush()
     }
@@ -729,10 +739,10 @@ impl Connection {
     /// (or window manager) applies it.
     pub fn set_size(&mut self, window: WindowId, width: u32, height: u32) -> Result<()> {
         let (w, h) = (dim(width)?, dim(height)?);
-        let resizable = self.state(window)?.resizable;
-        if !resizable {
+        let st = self.state(window)?;
+        if !st.resizable {
             // Fixed-size hints would make the WM refuse the new size.
-            self.client.send(&size_hints(window.0, None, w, h, false))?;
+            self.client.send(&size_hints(window.0, st.position, w, h, false))?;
         }
         self.client.send(&req::configure_window(window.0, &req::ConfigureWindow { width: Some(w), height: Some(h), ..Default::default() }))?;
         self.client.flush()
@@ -1427,13 +1437,21 @@ fn motif_hints(decorations: bool) -> [u32; 5] {
     [2, 0, u32::from(decorations), 0, 0]
 }
 
-/// `WM_NORMAL_HINTS` (ICCCM §4.1.2.3).
+/// `WM_NORMAL_HINTS` (ICCCM §4.1.2.3). Always with static gravity: a
+/// position (here, or later in `set_position`) is then where the window
+/// itself goes, not its window manager frame — the same corner that
+/// `window_position` reports, so moving a window to where it is leaves it
+/// there instead of creeping by the frame's border and title.
 fn size_hints(window: Xid, position: Option<(i32, i32)>, w: u16, h: u16, resizable: bool) -> Vec<u8> {
     const US_POSITION: u32 = 1;
     const P_POSITION: u32 = 4;
     const P_MIN_SIZE: u32 = 16;
     const P_MAX_SIZE: u32 = 32;
+    const P_WIN_GRAVITY: u32 = 512;
+    const STATIC_GRAVITY: u32 = 10;
     let mut hints = [0u32; 18];
+    hints[0] = P_WIN_GRAVITY;
+    hints[17] = STATIC_GRAVITY;
     if let Some((x, y)) = position {
         hints[0] |= US_POSITION | P_POSITION;
         hints[1] = x as u32;
@@ -1535,8 +1553,9 @@ mod tests {
         assert_eq!((u32_at(&motif, 0), u32_at(&motif, 8)), (2, 0), "decorations off");
         let hints = server.property(w, "WM_NORMAL_HINTS").unwrap().2;
         let hint = |i: usize| u32_at(&hints, i * 4);
-        assert_eq!(hint(0), 1 | 4 | 16 | 32);
+        assert_eq!(hint(0), 1 | 4 | 16 | 32 | 512);
         assert_eq!((hint(1), hint(2)), (10, 20));
+        assert_eq!(hint(17), 10, "static gravity: the position is the window's, not its frame's");
         assert_eq!((hint(5), hint(6), hint(7), hint(8)), (275, 116, 275, 116), "fixed size");
         let st = server.property(w, "_NET_WM_STATE").unwrap().2;
         assert_eq!(u32_at(&st, 0), server.atom("_NET_WM_STATE_ABOVE"));
@@ -1909,6 +1928,25 @@ mod tests {
         conn.minimize(win).unwrap();
         conn.client().sync().unwrap();
         assert!(server.finish().with_opcode(opcode::SEND_EVENT).is_empty(), "no WM: nothing to ask");
+    }
+
+    #[test]
+    fn resizing_keeps_the_position_hint() {
+        let (mut conn, server) = open(Script::default());
+        let w = conn.create_window(WindowOptions::new(5, 5).position(10, 20).resizable(false)).unwrap();
+        conn.set_size(w, 7, 9).unwrap();
+        conn.client().sync().unwrap();
+        let hints = server.property(w.xid(), "WM_NORMAL_HINTS").unwrap().2;
+        let hint = |i: usize| u32_at(&hints, i * 4);
+        assert_eq!(hint(0) & 1, 1, "USPosition still set");
+        assert_eq!((hint(1), hint(2), hint(5), hint(7)), (10, 20, 7, 7));
+        // After a move, the hint follows it.
+        conn.set_position(w, 30, 40).unwrap();
+        conn.set_size(w, 8, 8).unwrap();
+        conn.client().sync().unwrap();
+        let hints = server.property(w.xid(), "WM_NORMAL_HINTS").unwrap().2;
+        assert_eq!((u32_at(&hints, 4), u32_at(&hints, 8)), (30, 40));
+        server.finish();
     }
 
     #[test]

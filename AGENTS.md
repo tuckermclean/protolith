@@ -72,6 +72,18 @@ and screenshotting examples by hand).
   autorepeat, pair detection only as fallback.
 - Without a window manager (Xfbdev, Xvfb) nothing gives you focus; and
   size hints are only hints — some WMs (and XQuartz/VcXsrv) ignore them.
+- `WM_NORMAL_HINTS` is rewritten whole: whatever rewrites it (`set_size`
+  on a fixed-size window) must keep `USPosition`, or a window manager
+  reading it later takes the window as unplaced — twm then grabs the
+  server and waits for the user to place it by hand, which looks like a
+  hang of every client.
+- Without static gravity, a window manager puts the *frame* where a
+  position asks and the client inside it: `set_position` to where
+  `window_position` says the window is moves it by the frame's border and
+  title. Hence `StaticGravity` in every window's size hints.
+- Check placement under real window managers (twm, openbox, IceWM,
+  Fluxbox, xfwm4: phonolite's `tools/check-windows.sh`); each has its own
+  idea (openbox centers transient windows on their owner).
 - Don't `pkill -f Xvfb…` from a shell whose own command line contains that
   string; use `pkill -x Xvfb` or kill by PID.
 
