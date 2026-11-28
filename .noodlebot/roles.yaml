@@ -1,0 +1,14 @@
+# Role guard paths for protolith. A key here replaces the guard's default list for that key,
+# so `tests:` repeats the defaults and adds this crate's own test paths:
+# - src/**/tests.rs: unit-test modules in their own files (`#[cfg(test)] mod tests;`);
+# - src/x11/fake.rs: the cfg(test)-only fake X server, test infrastructure.
+# `specs:` keeps the guard's default.
+tests:
+  - "**/*.test.sh"
+  - "**/*_test.*"
+  - "**/test_*"
+  - "**/tests/**"
+  - "**/testdata/**"
+  - "**/fixtures/**"
+  - "src/**/tests.rs"
+  - "src/x11/fake.rs"
