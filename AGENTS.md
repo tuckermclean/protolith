@@ -89,64 +89,91 @@ and screenshotting examples by hand).
 
 ## Where this is going
 
-The motivating application is an mpg123 frontend that loads classic Winamp
-2.x skins — several borderless, shaped, draggable windows, sprite-sheet
-widgets, an animated visualizer. Art in examples must be original (no
-copied skin assets).
-
-**Next: a UI layer** (agreed 2026-11-25), as opt-in features in this crate:
-
-1. **Done:** `canvas` (fill, clip, blend, copy/key/alpha blits,
-   nearest-neighbor scaling) and `bmp` (uncompressed 1–32-bit). Pixel ops
-   follow Stele's `src/surface/mem.rs`, **not** its CSS-coupled
-   `Surface`/`TextRun` API. Measured: +2.7 KB all ops used, +5.1 KB the
-   decoder.
-2. **Done:** `font` — the `Font` trait, `SheetFont` (sprite-sheet glyphs
-   by layout string) and Terminus (OFL-1.1, `third_party/terminus-font/`),
-   one feature per size/weight, regenerated from upstream BDF by
-   `tools/gen-terminus.py` (byte-identical to Stele's tables). No 12 px
-   bold: upstream's is a copy of the regular — when rewiring Stele, map its
-   bold 12 to `REGULAR_12`. Measured: 16 px regular +3.4 KB all in.
-3. **Done:** `ui::TextEdit` (Stele's `address_edit.rs` core plus
-   selection, words, limit) and `ui::TextField` (events → `Response`,
-   mouse, scrolling, `FieldStyle`). Measured +6.8 KB. Stele's address bar
-   can sit on `TextEdit` directly when rewired.
-4. **Done:** `ui::{Button, Toggle, Slider, List}` — events in, `Response`
-   out, focus follows clicks, default bevel look or state for sprites.
-   Measured +6.6 KB for all four. `Event::Button` gained `time` for the
-   list's double click.
-
-5. **Done:** sprite-sheet skins — `ui::{ButtonSprites, ToggleSprites,
-   SliderSprites, Frames}` and `draw_sprite`; `examples/skin` (original
-   art generated in the classic sheet layout; optionally an unpacked
-   classic skin directory). Testing on a real skin showed most classic
-   bitmaps are RLE8, so `bmp` decodes RLE8/RLE4 now. The user's
-   `~/Downloads/base-2.91.wsz` is reference material only: never vendor
-   it or anything extracted from it.
-
-The UI layer is complete, and the player exists: **phonolite**
-(`~/gitrepos/phonolite`, path dependency on this crate) — docked shaped
-window, sprite-skinned widgets, popups, dialogs from the stock widgets. It
-needed two small additions here (`Connection::minimize`,
-`WindowId::from_xid`); anything else it lacks is a protolith request to
-agree with the user, not a workaround there. Natural next step, to agree
-with the user first: the Stele rewire below.
-
-**lintel** (`~/gitrepos/lintel`), a small hybrid tiling/floating window
-manager, is next (agreed 2026-11-26): drag-to-edge tiling as Windows Snap
-and macOS do it, which anyone knows without being told. protolith gives it
-`become_window_manager`, frames and `Event::Foreign` plus the WM requests;
-the policy (layout, decorations, EWMH) lives in lintel, not here.
-
-Out of scope for protolith: `.wsz` (ZIP/inflate) skin archives, audio,
-mpg123 control — those belong to the player.
-
-**Later: rewire Stele** onto protolith (a Stele packet, following Stele's
-own AGENTS.md; measure the i486 size delta in Stele's CI).
+What is done, what is planned and in what order, and the open decisions are in
+[`SPEC.md`](SPEC.md) (its sections "State" and "Open decisions"); the scope
+and the principles every change keeps are there too.
 
 ## Housekeeping
 
 - Commits: imperative subject, a body that says why, ending with the
   `Co-Authored-By` trailer the harness provides.
-- No remote yet; pushing/creating the GitHub repo needs the user's go-ahead.
+- Branches and pull requests follow "Building a node" below; never push to
+  `main`.
 - Append notable decisions to `CHANGELOG.md` under the unreleased version.
+
+## Building a node
+
+The work is planned as a graph of nodes (`docs/graph.yaml`, one spec
+`nodes/<ID>-<name>.md` each); `SPEC.md` says what is done and what comes
+next.
+
+- **Building.** Build a node with `/noodlebot:node <ID>`.
+- **Authority order.** `SPEC.md`, then `docs/graph.yaml`, then the node
+  spec, then this file. When two disagree, the earlier one wins and the
+  later one is fixed by a spec PR.
+- **Roles.** The plugin's tester writes the failing tests, its implementer
+  makes them pass, its reviewer judges the result; this repository has no
+  role agents of its own. `.noodlebot/roles.yaml` gives the role guard this
+  crate's test paths (below).
+- **Spec checkers.** From the repository root,
+  `python3 -I <plugin dir>/skills/node/check-regime.py` and
+  `python3 -I <plugin dir>/skills/node/check-coverage.py` must both print
+  `PROBLEMS 0` before a spec PR is opened.
+- **Gate command.** `PROTOLITH_REQUIRE_XVFB=1 cargo test --all-features`,
+  the whole suite (unit, integration and doc tests). It runs in CI on the
+  PR (`.github/workflows/ci.yml`, jobs `test (stable)` and `test (1.75)`).
+  A failing test prints `test <name> ... FAILED` (a doc-test's name reads
+  like `src/canvas/mod.rs - canvas (line 11)`), the line the graph's
+  `fail_pattern` matches. The other commands of "The gate" above are still
+  run before every commit and are required in CI, but they are not the
+  graph's gate.
+- **CI's output.** A CI log can add colour escape codes
+  (`\x1b\[[0-9;]*m`; the workflow sets `CARGO_TERM_COLOR: always`) and, in
+  a fetched job log, a timestamp prefix on every line (`^\S+Z `).
+  `fail_pattern` matches the lines once both are stripped. Run the gate
+  locally with `CI=true` and the agent session's variables (such as
+  `CLAUDECODE`, `AI_AGENT`) unset, as CI sees it.
+- **Quick gate.** In a session, run locally instead the red targets and
+  the tests of what a change touches, through cargo's own test runner, which
+  prints the same `... FAILED` lines (cargo takes test targets and name
+  filters, not file paths):
+  - a touched `tests/<stem>.rs`:
+    `PROTOLITH_REQUIRE_XVFB=1 cargo test --all-features --test <stem>`;
+  - a touched source file (or its `tests.rs`):
+    `PROTOLITH_REQUIRE_XVFB=1 cargo test --all-features --lib -- <module path>::`,
+    the filter being the file's module path (`src/x11/client.rs` →
+    `x11::client::`, `src/canvas/mod.rs` → `canvas::`; `src/x11/fake.rs`
+    serves the x11 tests, so `x11::`); several filters may follow `--`;
+  - touched doc comments with examples:
+    `PROTOLITH_REQUIRE_XVFB=1 cargo test --all-features --doc`.
+  When unsure which tests a change reaches, run the whole gate (about ten
+  seconds once built).
+- **Bounded workers.** libtest's `-- --test-threads=<n>` limits the test
+  threads (CI's Xvfb stress loop uses 16); each Xvfb test starts its own
+  server.
+- **Known red.** The graph's `gate.known_red` lists the tests that fail
+  today, by the full name their `FAILED` line prints. A failing test that
+  is not listed is a failure of the change. A listed failure stays until a
+  node fixes it; that node removes it from the list in its own PR.
+- **Owns.** A node changes only the files it owns (its `owns` globs) and
+  its direct deps' files, and puts every file it adds where the graph's
+  globs cover it.
+- **Red target.** A command that exits non-zero before the node's change
+  and 0 after, normally one of the quick-gate commands narrowed to the
+  node's new tests (`... --lib -- <module path>::tests::<test name>`, or
+  `... --test <stem> <test name>`). A test that does not compile yet is
+  red too.
+- **Tests and fixtures.** Integration tests are `tests/*.rs`. Unit tests
+  are a source file's `tests` module; in their own file
+  `src/<path>/<file>/tests.rs` (or `src/<dir>/tests.rs` for a `mod.rs`),
+  declared by `#[cfg(test)] mod tests;` in the source file, they are
+  test paths for the role guard. `src/x11/fake.rs` (the fake X server) is a
+  test path too. There are no fixture files: BMP fixtures are built field
+  by field in the test code. A new source file's unit tests follow
+  `SPEC.md`'s open decision OD3.
+- **Spec files:** `SPEC.md`, `docs/graph.yaml`, `nodes/` (a trailing slash marks a folder); a spec PR changes only these.
+- **Porting rules.** None.
+- **CI evidence.** In the node's PR, record the `test` job's gate output
+  (stable and 1.75) for the PR's head commit with every other CI job green,
+  the red target's output before and after, and, for a substantial change,
+  the release-size delta on the i486 build (non-negotiable 2).
